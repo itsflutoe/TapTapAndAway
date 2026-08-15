@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { geocodeAddress } from '../lib/geo';
+import PageHeader from '../components/PageHeader';
 
 export default function ProfilePage() {
   const { profile, pigeon, signOut, refreshProfile } = useAuth();
@@ -44,7 +45,7 @@ export default function ProfilePage() {
 
   return (
     <div className="page">
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>👤 Profile</h1>
+      <PageHeader title="👤 Profile" />
 
       <div className="card" style={{ textAlign: 'center', marginBottom: 16 }}>
         <div style={{ fontSize: 64, marginBottom: 8 }}>🐦</div>

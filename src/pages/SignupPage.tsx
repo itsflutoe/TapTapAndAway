@@ -16,9 +16,56 @@ export default function SignupPage() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [locHint, setLocHint] = useState('');
+  const [locLoading, setLocLoading] = useState(false);
 
-  const update = (key: string, value: string) =>
-    setForm((f) => ({ ...f, [key]: value }));
+  const update = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }));
+
+  /** One-shot GPS only (getCurrentPosition). Does not use watchPosition — GPS is not left open. */
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocHint('Geolocation is not supported on this device.');
+      return;
+    }
+    setLocLoading(true);
+    setLocHint('Getting your location…');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
+          const res = await fetch(url, {
+            headers: { 'Accept-Language': 'en', 'User-Agent': 'TapTapAndAway/1.0' },
+          });
+          const data = await res.json();
+          const label =
+            data?.address?.city ||
+            data?.address?.town ||
+            data?.address?.village ||
+            data?.address?.municipality ||
+            '';
+          const region = data?.address?.state || data?.address?.region || '';
+          const country = data?.address?.country || '';
+          const composed =
+            [label, region, country].filter(Boolean).join(', ') ||
+            data?.display_name ||
+            `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+          update('address', composed);
+          setLocHint(`Found: ${composed}. GPS is off.`);
+        } catch {
+          setLocHint('Got GPS but could not resolve a place name. Type your address instead.');
+        } finally {
+          setLocLoading(false);
+        }
+      },
+      (err) => {
+        setLocLoading(false);
+        setLocHint(err.message || 'Could not get location. Enter address manually.');
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +78,10 @@ export default function SignupPage() {
       setError('Password must be at least 6 characters.');
       return;
     }
+    if (!form.address.trim()) {
+      setError('Address is required and cannot be changed later.');
+      return;
+    }
     setLoading(true);
     const { error } = await signUp({
       username: form.username,
@@ -41,11 +92,8 @@ export default function SignupPage() {
       pigeonName: form.pigeonName,
     });
     setLoading(false);
-    if (error) {
-      setError(error);
-    } else {
-      navigate('/');
-    }
+    if (error) setError(error);
+    else navigate('/');
   };
 
   return (
@@ -83,7 +131,7 @@ export default function SignupPage() {
           </select>
         </div>
         <div className="input-group">
-          <label>Address (delivery destination)</label>
+          <label>Address (set once at signup)</label>
           <input
             value={form.address}
             onChange={(e) => update('address', e.target.value)}
@@ -91,8 +139,21 @@ export default function SignupPage() {
             placeholder="Pandi, Bulacan, Philippines"
           />
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-            City + country works best. This is where pigeons will deliver to you.
+            Locked after signup — only an admin can change it later. GPS is used once to fill the
+            field, then turned off (no continuous tracking).
           </p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ width: '100%', marginTop: 10, padding: '10px 14px' }}
+            disabled={locLoading}
+            onClick={useCurrentLocation}
+          >
+            {locLoading ? 'Locating…' : '📍 Use my current location'}
+          </button>
+          {locHint && (
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>{locHint}</p>
+          )}
         </div>
         <div className="input-group">
           <label>Name your pigeon</label>

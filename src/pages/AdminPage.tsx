@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { geocodeAddress } from '../lib/geo';
 import type { Profile, Delivery } from '../types';
 
 type Tab = 'dashboard' | 'users' | 'deliveries' | 'codes' | 'settings';
@@ -170,6 +171,27 @@ export default function AdminPage() {
       flash(`Stamps adjusted by ${delta}`);
       void loadUsers();
       void loadStats();
+    }
+  };
+
+  const changeAddress = async (id: string, current: string) => {
+    const next = window.prompt('New address for this user:', current);
+    if (next == null || !next.trim()) return;
+    const geo = await geocodeAddress(next.trim());
+    if (!geo) {
+      flash('Could not geocode that address.', true);
+      return;
+    }
+    const { error } = await supabase.rpc('admin_set_address', {
+      p_user_id: id,
+      p_address: next.trim(),
+      p_latitude: geo.lat,
+      p_longitude: geo.lon,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(`Address updated → ${geo.display_name}`);
+      void loadUsers();
     }
   };
 
@@ -385,6 +407,14 @@ export default function AdminPage() {
                       onClick={() => void ban(u.id, !u.is_banned)}
                     >
                       {u.is_banned ? 'Unban' : 'Ban'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '6px 10px', width: 'auto' }}
+                      onClick={() => void changeAddress(u.id, u.address)}
+                    >
+                      Address
                     </button>
                   </div>
                 </div>

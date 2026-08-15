@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { geocodeAddress, formatDuration } from '../lib/geo';
+import { formatDuration } from '../lib/geo';
 import PageHeader from '../components/PageHeader';
 import type { Delivery } from '../types';
 
@@ -17,7 +17,6 @@ export default function ProfilePage() {
   const { user, profile, pigeon, signOut, refreshProfile } = useAuth();
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
-  const [address, setAddress] = useState(profile?.address || '');
   const [pigeonName, setPigeonName] = useState(pigeon?.name || '');
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
@@ -66,21 +65,9 @@ export default function ProfilePage() {
   const save = async () => {
     setSaving(true);
     setMsg('');
-    let lat = profile.latitude;
-    let lng = profile.longitude;
-    if (address !== profile.address) {
-      const geo = await geocodeAddress(address);
-      if (!geo) {
-        setMsg('Could not geocode the new address.');
-        setSaving(false);
-        return;
-      }
-      lat = geo.lat;
-      lng = geo.lon;
-    }
     await supabase
       .from('profiles')
-      .update({ display_name: displayName, address, latitude: lat, longitude: lng })
+      .update({ display_name: displayName })
       .eq('id', profile.id);
     if (pigeon && pigeonName !== pigeon.name) {
       await supabase.from('pigeons').update({ name: pigeonName }).eq('id', pigeon.id);
@@ -119,10 +106,6 @@ export default function ProfilePage() {
             <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           </div>
           <div className="input-group">
-            <label>Address</label>
-            <input value={address} onChange={(e) => setAddress(e.target.value)} />
-          </div>
-          <div className="input-group">
             <label>Pigeon name</label>
             <input value={pigeonName} onChange={(e) => setPigeonName(e.target.value)} />
           </div>
@@ -143,6 +126,9 @@ export default function ProfilePage() {
         <div className="card">
           <p>
             <strong>Address:</strong> {profile.address}
+          </p>
+          <p style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+            Location is set at signup and can only be changed by an admin.
           </p>
           <p style={{ marginTop: 8 }}>
             <strong>Pigeon:</strong> {pigeon?.name} ({pigeon?.gender})

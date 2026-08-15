@@ -10,7 +10,7 @@ import {
   getWeatherForRoute,
   formatDuration,
 } from '../lib/geo';
-import { sendPigeonMessage } from '../services/messaging';
+import { sendPigeonMessage, getEventEffects } from '../services/messaging';
 import type { Profile, Friendship } from '../types';
 import PageHeader from '../components/PageHeader';
 
@@ -23,6 +23,8 @@ export default function SendPage() {
   const [preview, setPreview] = useState<{
     distanceKm: number;
     cost: number;
+    baseCost: number;
+    freeSend: boolean;
     weather: string;
     weatherDesc: string;
     speed: number;
@@ -85,14 +87,21 @@ export default function SendPage() {
       p.latitude,
       p.longitude
     );
-    const cost = calculateStampCost(distanceKm);
+    const baseCost = calculateStampCost(distanceKm);
+    const effects = await getEventEffects();
+    let cost = baseCost;
+    if (effects.free_sends) cost = 0;
+    else if (effects.stamp_multiplier > 1) {
+      cost = Math.max(1, Math.ceil(baseCost / effects.stamp_multiplier));
+    }
+
     const weather = await getWeatherForRoute(
       profile.latitude,
       profile.longitude,
       p.latitude,
       p.longitude
     );
-    const speed = 100 * weather.multiplier;
+    const speed = 100 * weather.multiplier * (effects.speed_multiplier || 1);
     const realSec = calculateFlightSeconds(distanceKm, speed);
 
     let multiplier = 1;
@@ -103,6 +112,8 @@ export default function SendPage() {
     setPreview({
       distanceKm: Math.round(distanceKm * 10) / 10,
       cost,
+      baseCost,
+      freeSend: effects.free_sends,
       weather: weather.condition,
       weatherDesc: weather.description,
       speed: Math.round(speed * 10) / 10,
@@ -115,7 +126,7 @@ export default function SendPage() {
 
   const handleSend = async () => {
     if (!selected || !profile || !pigeon || !user || !preview) return;
-    if (profile.stamp_balance < preview.cost) {
+    if (preview.cost > 0 && profile.stamp_balance < preview.cost) {
       setError('Not enough Stamps.');
       return;
     }
@@ -202,7 +213,17 @@ export default function SendPage() {
               </p>
             )}
             <p style={{ marginTop: 8 }}>
-              Cost: <strong>🪙 {preview.cost} Stamps</strong>
+              Cost:{' '}
+              <strong>
+                {preview.freeSend || preview.cost === 0
+                  ? '🆓 FREE (event)'
+                  : `🪙 ${preview.cost} Stamps`}
+              </strong>
+              {preview.freeSend && preview.baseCost > 0 && (
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 6 }}>
+                  (was {preview.baseCost})
+                </span>
+              )}
             </p>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
               You have {profile?.stamp_balance} Stamps
@@ -228,7 +249,7 @@ export default function SendPage() {
                 setError('Write a message first.');
                 return;
               }
-              if ((profile?.stamp_balance ?? 0) < (preview?.cost ?? 1)) {
+              if ((preview?.cost ?? 0) > 0 && (profile?.stamp_balance ?? 0) < (preview?.cost ?? 1)) {
                 setError('Not enough Stamps.');
                 return;
               }
@@ -268,8 +289,16 @@ export default function SendPage() {
             “{content.trim()}”
           </p>
           <p style={{ fontSize: 14 }}>
-            🪙 <strong>{preview.cost}</strong> Stamps · {preview.distanceKm} km ·{' '}
-            {formatDuration(preview.durationSec)}
+            {preview.freeSend || preview.cost === 0 ? (
+              <>
+                🆓 <strong>FREE</strong>
+              </>
+            ) : (
+              <>
+                🪙 <strong>{preview.cost}</strong> Stamps
+              </>
+            )}{' '}
+            · {preview.distanceKm} km · {formatDuration(preview.durationSec)}
           </p>
           {error && <p className="error-text">{error}</p>}
           <button

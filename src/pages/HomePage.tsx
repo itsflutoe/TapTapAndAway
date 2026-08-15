@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Settings, ShoppingBag } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
+import NotificationBell from '../components/NotificationBell';
 
 export default function HomePage() {
   const { profile, pigeon, claimDailyReward } = useAuth();
@@ -47,6 +48,7 @@ export default function HomePage() {
         </Link>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span className="stamp-badge">🪙 {profile.stamp_balance}</span>
+          <NotificationBell />
           <Link to="/store" aria-label="Store">
             <ShoppingBag size={22} color="var(--text-secondary)" />
           </Link>

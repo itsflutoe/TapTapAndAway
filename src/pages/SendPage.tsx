@@ -6,6 +6,7 @@ import {
   haversineKm,
   calculateStampCost,
   calculateFlightSeconds,
+  applyTimeMultiplier,
   getWeatherForRoute,
   formatDuration,
 } from '../lib/geo';
@@ -26,6 +27,8 @@ export default function SendPage() {
     weatherDesc: string;
     speed: number;
     durationSec: number;
+    realSec: number;
+    multiplier: number;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -49,6 +52,20 @@ export default function SendPage() {
       setFriends(list);
     })();
   }, [user]);
+
+  if (profile?.is_banned) {
+    return (
+      <div className="page">
+        <PageHeader title="🐦 Send a Letter" />
+        <div className="card" style={{ textAlign: 'center', padding: 28 }}>
+          <p style={{ fontWeight: 700, marginBottom: 8 }}>Account restricted</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
+            Your account has been banned. You cannot send pigeons.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const selectFriend = async (p: Profile) => {
     setSelected(p);
@@ -76,9 +93,13 @@ export default function SendPage() {
       p.longitude
     );
     const speed = 100 * weather.multiplier;
-    // Use high multiplier for testing so durations are short (seconds)
     const realSec = calculateFlightSeconds(distanceKm, speed);
-    const durationSec = Math.max(5, Math.round(realSec / 3600)); // ~1 real sec ≈ 1 simulated hour
+
+    let multiplier = 1;
+    const { data: multData } = await supabase.rpc('get_time_multiplier');
+    if (multData != null && Number(multData) > 0) multiplier = Number(multData);
+
+    const durationSec = applyTimeMultiplier(realSec, multiplier);
     setPreview({
       distanceKm: Math.round(distanceKm * 10) / 10,
       cost,
@@ -86,6 +107,8 @@ export default function SendPage() {
       weatherDesc: weather.description,
       speed: Math.round(speed * 10) / 10,
       durationSec,
+      realSec,
+      multiplier,
     });
     setStep(2);
   };
@@ -110,12 +133,12 @@ export default function SendPage() {
         senderProfile: profile,
         receiverProfile: selected,
         pigeonId: pigeon.id,
-        timeMultiplier: 3600,
+        timeMultiplier: preview.multiplier,
       });
       await refreshProfile();
       navigate(`/delivery/${delivery.id}`);
-    } catch (e: any) {
-      setError(e.message || 'Failed to send.');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to send.');
     } finally {
       setLoading(false);
     }
@@ -136,9 +159,10 @@ export default function SendPage() {
           {friends.map((f) => (
             <button
               key={f.id}
+              type="button"
               className="card"
               style={{ width: '100%', textAlign: 'left', marginBottom: 8, cursor: 'pointer' }}
-              onClick={() => selectFriend(f)}
+              onClick={() => void selectFriend(f)}
             >
               <strong>{f.display_name}</strong>
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -153,23 +177,41 @@ export default function SendPage() {
       {step === 2 && selected && preview && (
         <>
           <div className="card" style={{ marginBottom: 12 }}>
-            <p><strong>To:</strong> {selected.display_name}</p>
+            <p>
+              <strong>To:</strong> {selected.display_name}
+            </p>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{selected.pigeon_id}</p>
             <p style={{ fontSize: 13, marginTop: 4 }}>{selected.address}</p>
           </div>
           <div className="card" style={{ marginBottom: 12, fontSize: 14 }}>
-            <p>Distance: <strong>{preview.distanceKm} km</strong></p>
-            <p>Weather: <strong>{preview.weatherDesc}</strong></p>
-            <p>Pigeon speed: <strong>{preview.speed} mph</strong></p>
-            <p>Estimated delivery: <strong>{formatDuration(preview.durationSec)}</strong></p>
-            <p style={{ marginTop: 8 }}>Cost: <strong>🪙 {preview.cost} Stamps</strong></p>
+            <p>
+              Distance: <strong>{preview.distanceKm} km</strong>
+            </p>
+            <p>
+              Weather: <strong>{preview.weatherDesc}</strong>
+            </p>
+            <p>
+              Pigeon speed: <strong>{preview.speed} mph</strong>
+            </p>
+            <p>
+              Estimated delivery: <strong>{formatDuration(preview.durationSec)}</strong>
+            </p>
+            {preview.multiplier !== 1 && (
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                (Real flight ~{formatDuration(preview.realSec)}; time multiplier ×{preview.multiplier})
+              </p>
+            )}
+            <p style={{ marginTop: 8 }}>
+              Cost: <strong>🪙 {preview.cost} Stamps</strong>
+            </p>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
               You have {profile?.stamp_balance} Stamps
             </p>
           </div>
           <div className="input-group">
-            <label>Your message</label>
+            <label htmlFor="msg">Your message</label>
             <textarea
+              id="msg"
               rows={4}
               value={content}
               onChange={(e) => setContent(e.target.value)}
@@ -178,13 +220,77 @@ export default function SendPage() {
             />
           </div>
           {error && <p className="error-text">{error}</p>}
-          <button className="btn btn-primary" onClick={handleSend} disabled={loading}>
-            {loading ? 'Sending…' : '🐦 SEND PIGEON'}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              if (!content.trim()) {
+                setError('Write a message first.');
+                return;
+              }
+              if ((profile?.stamp_balance ?? 0) < (preview?.cost ?? 1)) {
+                setError('Not enough Stamps.');
+                return;
+              }
+              setError('');
+              setStep(3);
+            }}
+          >
+            Continue
           </button>
-          <button className="btn btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => setStep(1)}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ width: '100%', marginTop: 8 }}
+            onClick={() => setStep(1)}
+          >
             Back
           </button>
         </>
+      )}
+
+      {step === 3 && selected && preview && (
+        <div className="card">
+          <h2 style={{ fontSize: 18, marginBottom: 12, textAlign: 'center' }}>Confirm send?</h2>
+          <p style={{ fontSize: 14, marginBottom: 8 }}>
+            To <strong>{selected.display_name}</strong>
+          </p>
+          <p
+            style={{
+              fontSize: 14,
+              color: 'var(--text-secondary)',
+              marginBottom: 12,
+              padding: 10,
+              background: '#f5f5f7',
+              borderRadius: 10,
+            }}
+          >
+            “{content.trim()}”
+          </p>
+          <p style={{ fontSize: 14 }}>
+            🪙 <strong>{preview.cost}</strong> Stamps · {preview.distanceKm} km ·{' '}
+            {formatDuration(preview.durationSec)}
+          </p>
+          {error && <p className="error-text">{error}</p>}
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ marginTop: 14 }}
+            onClick={() => void handleSend()}
+            disabled={loading}
+          >
+            {loading ? 'Sending…' : '🐦 SEND PIGEON'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ width: '100%', marginTop: 8 }}
+            disabled={loading}
+            onClick={() => setStep(2)}
+          >
+            Back
+          </button>
+        </div>
       )}
     </div>
   );

@@ -40,6 +40,9 @@ export interface Pigeon {
   reliability: number;
   rarity: string;
   is_active: boolean;
+  total_distance_km?: number;
+  total_flights?: number;
+  successful_flights?: number;
   created_at: string;
 }
 

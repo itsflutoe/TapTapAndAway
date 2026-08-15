@@ -9,8 +9,6 @@ import { completeDelivery, markMessageRead } from '../services/messaging';
 import { formatDuration } from '../lib/geo';
 import type { Delivery, Message, Profile } from '../types';
 
-// Fix default marker icons in Leaflet + Vite
-
 const DefaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -31,7 +29,7 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
     if (positions.length >= 2) {
-      map.fitBounds(positions, { padding: [40, 40] });
+      map.fitBounds(positions, { padding: [48, 48] });
     }
   }, [map, positions]);
   return null;
@@ -58,23 +56,24 @@ export default function DeliveryPage() {
       const { data: m } = await supabase.from('messages').select('*').eq('id', d.message_id).single();
       if (m) {
         setMessage(m as Message);
-        const { data: r } = await supabase.from('profiles').select('*').eq('id', m.receiver_id).single();
+        const { data: r } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', m.receiver_id)
+          .single();
         setReceiver(r as Profile);
       }
     })();
   }, [deliveryId]);
 
-  // Receiver: mark as read once the message is delivered and they open this screen
+  // Receiver marks read when opening a delivered letter
   useEffect(() => {
     if (!user || !message || !delivery) return;
     const isReceiver = message.receiver_id === user.id;
-    const canRead =
-      delivery.status === 'DELIVERED' || delivery.status === 'READ';
+    const canRead = delivery.status === 'DELIVERED' || delivery.status === 'READ';
     if (isReceiver && canRead && !message.read_at) {
       markMessageRead(message.id).then(() => {
-        setMessage((prev) =>
-          prev ? { ...prev, read_at: new Date().toISOString() } : prev
-        );
+        setMessage((prev) => (prev ? { ...prev, read_at: new Date().toISOString() } : prev));
         setDelivery((prev) =>
           prev && prev.status === 'DELIVERED' ? { ...prev, status: 'READ' } : prev
         );
@@ -128,8 +127,8 @@ export default function DeliveryPage() {
 
   if (!delivery || !message) {
     return (
-      <div className="page">
-        <p>Loading delivery…</p>
+      <div className="page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: 'var(--text-secondary)' }}>Loading delivery…</p>
       </div>
     );
   }
@@ -137,30 +136,43 @@ export default function DeliveryPage() {
   const origin: [number, number] = [delivery.origin_latitude, delivery.origin_longitude];
   const dest: [number, number] = [delivery.destination_latitude, delivery.destination_longitude];
   const isDone = ['DELIVERED', 'READ', 'FAILED'].includes(delivery.status);
+  const isFailed = delivery.status === 'FAILED';
+  const isSender = user?.id === message.sender_id;
+  const isReceiver = user?.id === message.receiver_id;
+  const deliveredOk = delivery.status === 'DELIVERED' || delivery.status === 'READ';
+
+  const stepDeparture = progress > 0 || isDone;
+  const stepArrival = progress >= 100 || isDone;
+  const stepDelivered = isDone && !isFailed;
+
+  let statusText = `Flying… ${Math.round(progress)}%`;
+  if (isFailed) statusText = 'Pigeon returned home · Stamps refunded';
+  else if (isDone) statusText = 'Message delivered!';
 
   return (
-    <div className="page" style={{ paddingBottom: 24 }}>
-      <Link to="/inbox" style={{ fontSize: 14, marginBottom: 12, display: 'inline-block' }}>
-        ← Inbox
-      </Link>
-
-      <div className="card" style={{ marginBottom: 12 }}>
-        <p style={{ fontWeight: 600 }}>{receiver?.display_name || 'Recipient'}</p>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{receiver?.pigeon_id}</p>
-        <p style={{ fontSize: 13, marginTop: 6 }}>
-          {delivery.distance_km} km · {delivery.weather || 'clear'} · ~{formatDuration(delivery.estimated_duration_seconds)}
-        </p>
-      </div>
-
-      <div style={{ height: 260, marginBottom: 12, borderRadius: 12, overflow: 'hidden' }}>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        maxWidth: 480,
+        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#0b1220',
+        zIndex: 200,
+      }}
+    >
+      {/* Full-screen map */}
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <MapContainer
           center={origin}
           zoom={4}
           style={{ height: '100%', width: '100%' }}
-          scrollWheelZoom={false}
+          scrollWheelZoom
+          zoomControl={false}
         >
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            attribution="&copy; OpenStreetMap"
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <Marker position={origin} />
@@ -169,95 +181,259 @@ export default function DeliveryPage() {
           {pigeonPos && <Marker position={pigeonPos} icon={pigeonIcon} />}
           <FitBounds positions={[origin, dest]} />
         </MapContainer>
-      </div>
 
-      {/* Progress steps */}
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-          <Step label="DEPARTURE" done={progress > 0 || isDone} active={progress > 0 && progress < 50} />
-          <Step label="ARRIVAL" done={progress >= 100 || isDone} active={progress >= 50 && progress < 100} icon={progress >= 50 && progress < 100 ? '🐦' : undefined} />
-          <Step label="DELIVERED" done={isDone && delivery.status !== 'FAILED'} active={false} failed={delivery.status === 'FAILED'} />
-        </div>
-        <div style={{ height: 6, background: '#e5e5ea', borderRadius: 3, overflow: 'hidden' }}>
+        {/* Top overlay */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            padding: '12px 14px',
+            paddingTop: 'max(12px, env(safe-area-inset-top))',
+            background: 'linear-gradient(to bottom, rgba(11,18,32,0.85), transparent)',
+            zIndex: 500,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+          }}
+        >
+          <Link
+            to="/inbox"
+            style={{
+              flexShrink: 0,
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              background: 'rgba(255,255,255,0.95)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text)',
+              fontWeight: 600,
+              fontSize: 18,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              textDecoration: 'none',
+            }}
+            aria-label="Back to inbox"
+          >
+            ←
+          </Link>
           <div
             style={{
-              height: '100%',
-              width: `${progress}%`,
-              background: delivery.status === 'FAILED' ? 'var(--danger)' : 'var(--accent)',
+              flex: 1,
+              background: 'rgba(255,255,255,0.95)',
+              borderRadius: 14,
+              padding: '10px 14px',
+              boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+              minWidth: 0,
+            }}
+          >
+            <p style={{ fontWeight: 700, fontSize: 15, margin: 0 }}>
+              {receiver?.display_name || 'Recipient'}
+            </p>
+            <p
+              style={{
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                margin: '2px 0 0',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {receiver?.pigeon_id}
+              {receiver?.address ? ` · ${receiver.address}` : ''}
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              {delivery.distance_km} km · {delivery.weather || 'clear'} · ~
+              {formatDuration(delivery.estimated_duration_seconds)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom sheet */}
+      <div
+        style={{
+          background: '#fff',
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          padding: '18px 18px calc(18px + env(safe-area-inset-bottom, 0px))',
+          boxShadow: '0 -8px 28px rgba(0,0,0,0.12)',
+          zIndex: 500,
+        }}
+      >
+        <div style={{ position: 'relative', padding: '0 8px 8px' }}>
+          <div
+            style={{
+              position: 'absolute',
+              top: 14,
+              left: '16%',
+              right: '16%',
+              height: 3,
+              background: '#e8e8ed',
+              borderRadius: 2,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 14,
+              left: '16%',
+              width: `calc((100% - 32%) * ${Math.min(100, progress) / 100})`,
+              height: 3,
+              background: isFailed ? 'var(--danger)' : 'var(--accent)',
+              borderRadius: 2,
               transition: 'width 0.2s linear',
             }}
           />
+          <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative' }}>
+            <ProgressNode label="Departure" done={stepDeparture} active={!stepArrival && stepDeparture} />
+            <ProgressNode
+              label="In flight"
+              done={stepArrival}
+              active={stepDeparture && !stepArrival}
+              flying={!isDone && stepDeparture && !stepArrival}
+            />
+            <ProgressNode label="Delivered" done={stepDelivered} failed={isFailed} />
+          </div>
         </div>
-        <p style={{ textAlign: 'center', marginTop: 10, fontSize: 14, color: 'var(--text-secondary)' }}>
-          {delivery.status === 'FAILED'
-            ? 'Pigeon returned home. Stamps refunded.'
-            : isDone
-            ? 'Message delivered!'
-            : `Flying… ${Math.round(progress)}%`}
+
+        <p
+          style={{
+            textAlign: 'center',
+            marginTop: 4,
+            marginBottom: 12,
+            fontSize: 14,
+            fontWeight: 600,
+            color: isFailed ? 'var(--danger)' : isDone ? 'var(--success)' : 'var(--text)',
+          }}
+        >
+          {statusText}
         </p>
-      </div>
 
-      {/* Sender always sees their own text; receiver only after delivery */}
-      {(() => {
-        const isSender = user?.id === message.sender_id;
-        const isReceiver = user?.id === message.receiver_id;
-        const deliveredOk =
-          delivery.status === 'DELIVERED' || delivery.status === 'READ';
-        const showContent =
-          (isSender && delivery.status !== 'FAILED') ||
-          (isReceiver && deliveredOk);
+        {isReceiver && !deliveredOk && !isFailed && (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: 14,
+              background: '#f5f5f7',
+              borderRadius: 14,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <div style={{ fontSize: 28, marginBottom: 6 }}>🐦</div>
+            <p style={{ fontWeight: 600, color: 'var(--text)' }}>Pigeon is on the way</p>
+            <p style={{ fontSize: 13, marginTop: 4 }}>The letter opens when it arrives.</p>
+          </div>
+        )}
 
-        if (isReceiver && !deliveredOk && delivery.status !== 'FAILED') {
-          return (
-            <div className="card" style={{ marginTop: 12, textAlign: 'center', color: 'var(--text-secondary)' }}>
-              <p>🐦 The pigeon is still on the way…</p>
-              <p style={{ fontSize: 13, marginTop: 6 }}>The message will appear when it arrives.</p>
-            </div>
-          );
-        }
-
-        if (!showContent) return null;
-
-        return (
-          <div className="card" style={{ marginTop: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <p style={{ fontWeight: 600 }}>Message</p>
+        {((isSender && !isFailed) || (isReceiver && deliveredOk)) && (
+          <div style={{ padding: '14px 16px', background: '#f5f5f7', borderRadius: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  letterSpacing: 0.3,
+                }}
+              >
+                LETTER
+              </span>
               {isReceiver && message.read_at && (
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
               )}
               {isReceiver && !message.read_at && deliveredOk && (
-                <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>NEW</span>
+                <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 700 }}>NEW</span>
               )}
             </div>
-            <p>{message.content}</p>
+            <p style={{ fontSize: 16, lineHeight: 1.45, margin: 0 }}>{message.content}</p>
           </div>
-        );
-      })()}
+        )}
+
+        {isFailed && isSender && (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: 14,
+              background: '#fff5f5',
+              borderRadius: 14,
+              color: 'var(--danger)',
+              fontSize: 14,
+            }}
+          >
+            Delivery failed. Your Stamps were refunded.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function Step({
+function ProgressNode({
   label,
   done,
   active,
-  icon,
+  flying,
   failed,
 }: {
   label: string;
   done: boolean;
   active?: boolean;
-  icon?: string;
+  flying?: boolean;
   failed?: boolean;
 }) {
+  let bg = '#e8e8ed';
+  let color = '#8e8e93';
+  let content: string = '';
+
+  if (failed) {
+    bg = '#ff3b30';
+    color = '#fff';
+    content = '✕';
+  } else if (done) {
+    bg = '#34c759';
+    color = '#fff';
+    content = '✓';
+  } else if (flying || active) {
+    bg = '#0071e3';
+    color = '#fff';
+    content = flying ? '🐦' : '●';
+  }
+
   return (
-    <div style={{ textAlign: 'center', flex: 1 }}>
-      <div style={{ fontSize: 18, marginBottom: 2 }}>
-        {failed ? '❌' : done ? '✓' : active && icon ? icon : '○'}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 72 }}>
+      <div
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+          background: bg,
+          color,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: flying ? 14 : 13,
+          fontWeight: 700,
+          boxShadow: active || flying ? '0 0 0 4px rgba(0,113,227,0.2)' : undefined,
+          transition: 'background 0.2s',
+        }}
+      >
+        {content}
       </div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: done || active ? 'var(--text)' : 'var(--text-secondary)' }}>
+      <span
+        style={{
+          marginTop: 8,
+          fontSize: 11,
+          fontWeight: 600,
+          color: done || active || flying ? 'var(--text)' : 'var(--text-secondary)',
+          textAlign: 'center',
+        }}
+      >
         {label}
-      </div>
+      </span>
     </div>
   );
 }

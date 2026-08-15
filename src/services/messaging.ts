@@ -3,6 +3,7 @@ import {
   haversineKm,
   calculateStampCost,
   calculateFlightSeconds,
+  applyTimeMultiplier,
   getWeatherForRoute,
 } from '../lib/geo';
 import type { Message, Delivery, Profile } from '../types';
@@ -105,7 +106,7 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     senderProfile,
     receiverProfile,
     pigeonId,
-    timeMultiplier = 3600,
+    timeMultiplier,
   } = params;
 
   if (
@@ -140,7 +141,27 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
   const baseSpeed = 100;
   const modifiedSpeed = baseSpeed * weather.multiplier;
   const realSeconds = calculateFlightSeconds(distanceKm, modifiedSpeed);
-  const estimatedSeconds = Math.max(3, Math.round(realSeconds / timeMultiplier));
+
+  // Prefer live admin setting; fall back to param only if RPC unavailable
+  let multiplier = timeMultiplier;
+  const { data: multData } = await supabase.rpc('get_time_multiplier');
+  if (multData != null && Number(multData) > 0) {
+    multiplier = Number(multData);
+  } else if (multiplier == null || multiplier <= 0) {
+    multiplier = 1;
+  }
+
+  const estimatedSeconds = applyTimeMultiplier(realSeconds, multiplier);
+
+  // Anti-spam: max 5 messages / 60s (skip check if RPC not deployed yet)
+  const { data: canSend, error: rateErr } = await supabase.rpc('can_send_message', {
+    p_user_id: senderId,
+    p_max: 5,
+    p_window_seconds: 60,
+  });
+  if (!rateErr && canSend === false) {
+    throw new Error('You are sending too fast. Please wait a moment before sending another pigeon.');
+  }
 
   const conversationId = await getOrCreateConversation(senderId, receiverId);
 
@@ -225,7 +246,7 @@ export async function completeDelivery(
   const failed = Math.random() < failChance;
 
   if (failed) {
-    await supabase
+    const { data: failRow } = await supabase
       .from('deliveries')
       .update({
         status: 'FAILED',
@@ -233,7 +254,13 @@ export async function completeDelivery(
         actual_arrival: new Date().toISOString(),
         progress_percent: 100,
       })
-      .eq('id', deliveryId);
+      .eq('id', deliveryId)
+      .select('pigeon_id')
+      .maybeSingle();
+
+    if (failRow?.pigeon_id) {
+      await supabase.rpc('record_failed_flight', { p_pigeon_id: failRow.pigeon_id });
+    }
 
     const { data: msg } = await supabase
       .from('messages')
@@ -252,14 +279,23 @@ export async function completeDelivery(
     return { status: 'FAILED' as const };
   }
 
-  await supabase
+  const { data: delRow } = await supabase
     .from('deliveries')
     .update({
       status: 'DELIVERED',
       actual_arrival: new Date().toISOString(),
       progress_percent: 100,
     })
-    .eq('id', deliveryId);
+    .eq('id', deliveryId)
+    .select('pigeon_id, distance_km')
+    .maybeSingle();
+
+  if (delRow?.pigeon_id) {
+    await supabase.rpc('record_successful_flight', {
+      p_pigeon_id: delRow.pigeon_id,
+      p_distance_km: delRow.distance_km,
+    });
+  }
 
   await supabase.from('notifications').insert({
     user_id: receiverId,

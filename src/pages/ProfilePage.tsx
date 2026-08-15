@@ -2,14 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { formatDuration } from '../lib/geo';
 import PageHeader from '../components/PageHeader';
 import type { Delivery } from '../types';
 
 interface HistoryItem {
   delivery: Delivery;
   peerName: string;
-  content: string;
   isOutgoing: boolean;
 }
 
@@ -41,9 +39,10 @@ export default function ProfilePage() {
           .eq('message_id', m.id)
           .maybeSingle();
         if (!d) continue;
-        // History shows completed flights for this user
+        // Pigeon flight history: only trips YOU sent
+        if (m.sender_id !== user.id) continue;
         if (!['DELIVERED', 'READ', 'FAILED'].includes(d.status)) continue;
-        const peerId = m.sender_id === user.id ? m.receiver_id : m.sender_id;
+        const peerId = m.receiver_id;
         const { data: peer } = await supabase
           .from('profiles')
           .select('display_name')
@@ -52,7 +51,6 @@ export default function ProfilePage() {
         items.push({
           delivery: d as Delivery,
           peerName: peer?.display_name || 'Unknown',
-          content: m.content,
           isOutgoing: m.sender_id === user.id,
         });
       }
@@ -155,35 +153,20 @@ export default function ProfilePage() {
       {history.length === 0 && (
         <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>No completed deliveries yet.</p>
       )}
-      {history.map(({ delivery, peerName, content, isOutgoing }) => (
+      {history.map(({ delivery, peerName }) => (
         <Link
           key={delivery.id}
           to={`/delivery/${delivery.id}`}
           className="card"
           style={{ display: 'block', marginBottom: 8, textDecoration: 'none', color: 'inherit' }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <strong style={{ fontSize: 14 }}>
-              {isOutgoing ? `To ${peerName}` : `From ${peerName}`}
-            </strong>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              {delivery.status === 'FAILED' ? 'Failed' : delivery.status === 'READ' ? 'Read' : 'Delivered'}
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ fontSize: 14 }}>To {peerName}</strong>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{delivery.distance_km} km</span>
           </div>
-          <p
-            style={{
-              fontSize: 13,
-              color: 'var(--text-secondary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {content}
-          </p>
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {delivery.distance_km} km · {delivery.weather || '—'} · ~
-            {formatDuration(delivery.estimated_duration_seconds)}
+            {delivery.status === 'FAILED' ? 'Failed' : delivery.status === 'READ' ? 'Delivered · Read' : 'Delivered'}
+            {delivery.weather ? ` · ${delivery.weather}` : ''}
           </p>
         </Link>
       ))}

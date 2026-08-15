@@ -11,6 +11,7 @@ import {
 } from '../lib/geo';
 import { sendPigeonMessage } from '../services/messaging';
 import type { Profile, Friendship } from '../types';
+import PageHeader from '../components/PageHeader';
 
 export default function SendPage() {
   const { user, profile, pigeon, refreshProfile } = useAuth();
@@ -122,7 +123,7 @@ export default function SendPage() {
 
   return (
     <div className="page">
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>🐦 Send a Letter</h1>
+      <PageHeader title="🐦 Send a Letter" />
 
       {step === 1 && (
         <>

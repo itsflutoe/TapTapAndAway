@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import './styles/global.css';
 import LoginPage from './pages/LoginPage';
@@ -14,41 +14,80 @@ import DeliveryPage from './pages/DeliveryPage';
 import BottomNav from './components/BottomNav';
 import LoadingScreen from './components/LoadingScreen';
 
+function AdminUserModeBanner() {
+  const { profile, isAdminMode, setIsAdminMode } = useAuth();
+  const navigate = useNavigate();
+
+  if (!profile?.is_admin || isAdminMode) return null;
+
+  return (
+    <div
+      style={{
+        background: '#1d1d1f',
+        color: '#fff',
+        textAlign: 'center',
+        padding: '8px 12px',
+        fontSize: 12,
+        fontWeight: 600,
+        zIndex: 300,
+        position: 'sticky',
+        top: 0,
+      }}
+    >
+      ADMIN USER MODE{' '}
+      <button
+        type="button"
+        onClick={() => {
+          setIsAdminMode(true);
+          navigate('/admin');
+        }}
+        style={{
+          marginLeft: 8,
+          background: '#0071e3',
+          color: '#fff',
+          padding: '4px 10px',
+          borderRadius: 6,
+          fontSize: 11,
+          border: 'none',
+          cursor: 'pointer',
+          fontWeight: 700,
+        }}
+      >
+        RETURN TO ADMIN
+      </button>
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, isAdminMode } = useAuth();
 
   if (loading) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
 
+  // Admins in admin mode always go to admin panel
   if (profile?.is_admin && isAdminMode) {
     return <Navigate to="/admin" replace />;
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <AdminUserModeBanner />
+      {children}
+    </>
+  );
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, profile, loading, isAdminMode, setIsAdminMode } = useAuth();
+  const { user, profile, loading, isAdminMode } = useAuth();
 
   if (loading) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
   if (!profile?.is_admin) return <Navigate to="/" replace />;
 
+  // User mode: leave admin panel and use the normal app
   if (!isAdminMode) {
-    return (
-      <>
-        <div style={{ background: '#1d1d1f', color: '#fff', textAlign: 'center', padding: '6px', fontSize: 12, fontWeight: 600 }}>
-          ADMIN USER MODE{' '}
-          <button
-            onClick={() => setIsAdminMode(true)}
-            style={{ marginLeft: 8, background: '#0071e3', color: '#fff', padding: '2px 8px', borderRadius: 6, fontSize: 11 }}
-          >
-            RETURN TO ADMIN
-          </button>
-        </div>
-        {children}
-      </>
-    );
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -64,14 +103,90 @@ function AppRoutes() {
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/signup" element={user ? <Navigate to="/" replace /> : <SignupPage />} />
 
-      <Route path="/" element={<ProtectedRoute><div className="app-shell"><HomePage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/inbox" element={<ProtectedRoute><div className="app-shell"><InboxPage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/send" element={<ProtectedRoute><div className="app-shell"><SendPage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/friends" element={<ProtectedRoute><div className="app-shell"><FriendsPage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/profile" element={<ProtectedRoute><div className="app-shell"><ProfilePage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/store" element={<ProtectedRoute><div className="app-shell"><StorePage /><BottomNav /></div></ProtectedRoute>} />
-      <Route path="/delivery/:deliveryId" element={<ProtectedRoute><div className="app-shell"><DeliveryPage /></div></ProtectedRoute>} />
-      <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <HomePage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/inbox"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <InboxPage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/send"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <SendPage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/friends"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <FriendsPage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <ProfilePage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/store"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <StorePage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/delivery/:deliveryId"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <DeliveryPage />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminPage />
+          </AdminRoute>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

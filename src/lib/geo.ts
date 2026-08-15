@@ -10,7 +10,7 @@ export function haversineKm(
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371; // Earth radius km
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
@@ -27,20 +27,14 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
-/** Convert mph to km/h */
 export function mphToKmh(mph: number): number {
   return mph * 1.60934;
 }
 
-/** Stamp cost: ceil(distanceKm / 70), minimum 1 */
 export function calculateStampCost(distanceKm: number): number {
   return Math.max(1, Math.ceil(distanceKm / 70));
 }
 
-/**
- * Geocode free-text address using Nominatim (OpenStreetMap).
- * Free, no API key. Respect rate limits (1 req/sec recommended).
- */
 export async function geocodeAddress(address: string): Promise<GeocodeResult | null> {
   try {
     const params = new URLSearchParams({
@@ -70,10 +64,6 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
   }
 }
 
-/**
- * Fetch simple weather from Open-Meteo (free, no key).
- * Uses current weather code at the midpoint of the route for simplicity.
- */
 export async function getWeatherForRoute(
   originLat: number,
   originLon: number,
@@ -101,9 +91,7 @@ export async function getWeatherForRoute(
   }
 }
 
-/** WMO weather interpretation codes → our simplified categories */
 function mapWeatherCode(code: number): WeatherInfo {
-  // https://open-meteo.com/en/docs
   if (code === 0) return { condition: 'clear', multiplier: 1.0, description: 'Clear' };
   if (code <= 3) return { condition: 'cloudy', multiplier: 0.95, description: 'Cloudy' };
   if (code <= 48) return { condition: 'cloudy', multiplier: 0.95, description: 'Foggy / Cloudy' };
@@ -116,17 +104,27 @@ function mapWeatherCode(code: number): WeatherInfo {
 }
 
 /**
- * Calculate flight duration in real seconds (before time multiplier).
- * distance_km / (speed_mph * 1.60934) * 3600
+ * Real flight duration in seconds:
+ * distance_km / (speed_mph * 1.60934 km/h) * 3600
+ * Example: 10.5 km at 40 mph ≈ 587 seconds (~9m 47s)
  */
-export function calculateFlightSeconds(
-  distanceKm: number,
-  speedMph: number
-): number {
+export function calculateFlightSeconds(distanceKm: number, speedMph: number): number {
   const speedKmh = mphToKmh(speedMph);
-  if (speedKmh <= 0) return 0;
+  if (speedKmh <= 0 || distanceKm <= 0) return 1;
   const hours = distanceKm / speedKmh;
   return Math.max(1, Math.round(hours * 3600));
+}
+
+/**
+ * Apply admin time_multiplier.
+ * multiplier 1 = real time
+ * multiplier 3600 = 1 real second ≈ 1 simulated hour (fast testing)
+ * Never force a 3s floor when using real time — only enforce min 1s.
+ */
+export function applyTimeMultiplier(realSeconds: number, timeMultiplier: number): number {
+  const m = timeMultiplier > 0 ? timeMultiplier : 1;
+  const scaled = Math.round(realSeconds / m);
+  return Math.max(1, scaled);
 }
 
 export function formatDuration(seconds: number): string {
@@ -137,4 +135,21 @@ export function formatDuration(seconds: number): string {
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
+export async function fetchTimeMultiplier(): Promise<number> {
+  try {
+    const { supabase } = await import('./supabase');
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'time_multiplier')
+      .maybeSingle();
+    if (!data?.value) return 1;
+    const raw = data.value;
+    const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/"/g, ''));
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch {
+    return 1;
+  }
 }

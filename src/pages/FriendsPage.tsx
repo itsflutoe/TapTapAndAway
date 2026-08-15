@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Profile, Friendship } from '../types';
+import PageHeader from '../components/PageHeader';
 
 export default function FriendsPage() {
   const { user } = useAuth();
@@ -69,7 +70,7 @@ export default function FriendsPage() {
 
   return (
     <div className="page">
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>👥 Friends</h1>
+      <PageHeader title="👥 Friends" />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="input-group" style={{ marginBottom: 8 }}>

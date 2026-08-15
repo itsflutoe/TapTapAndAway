@@ -8,6 +8,35 @@ import {
 } from '../lib/geo';
 import type { Message, Delivery, Profile } from '../types';
 
+export interface EventEffects {
+  free_sends: boolean;
+  stamp_multiplier: number;
+  speed_multiplier: number;
+  double_daily: boolean;
+}
+
+export async function getEventEffects(): Promise<EventEffects> {
+  const defaults: EventEffects = {
+    free_sends: false,
+    stamp_multiplier: 1,
+    speed_multiplier: 1,
+    double_daily: false,
+  };
+  try {
+    const { data, error } = await supabase.rpc('get_event_effects');
+    if (error || !data) return defaults;
+    const d = data as Record<string, unknown>;
+    return {
+      free_sends: !!d.free_sends,
+      stamp_multiplier: Math.max(1, Number(d.stamp_multiplier) || 1),
+      speed_multiplier: Math.max(1, Number(d.speed_multiplier) || 1),
+      double_daily: !!d.double_daily,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
 export async function getOrCreateConversation(
   _userA: string,
   userB: string
@@ -125,9 +154,17 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     receiverProfile.longitude
   );
 
-  const stampCost = calculateStampCost(distanceKm);
+  // Active events: free_sends, stamp_multiplier, speed_multiplier
+  const effects = await getEventEffects();
+  let stampCost = calculateStampCost(distanceKm);
+  if (effects.free_sends) {
+    stampCost = 0;
+  } else if (effects.stamp_multiplier > 1) {
+    // Higher multiplier = cheaper sends (e.g. 2 → half cost, min 1)
+    stampCost = Math.max(1, Math.ceil(stampCost / effects.stamp_multiplier));
+  }
 
-  if (senderProfile.stamp_balance < stampCost) {
+  if (stampCost > 0 && senderProfile.stamp_balance < stampCost) {
     throw new Error('Not enough Stamps.');
   }
 
@@ -154,7 +191,7 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
   );
 
   const baseSpeed = 100;
-  const modifiedSpeed = baseSpeed * weather.multiplier;
+  const modifiedSpeed = baseSpeed * weather.multiplier * (effects.speed_multiplier || 1);
   const realSeconds = calculateFlightSeconds(distanceKm, modifiedSpeed);
 
   // Prefer live admin setting; fall back to param only if RPC unavailable
@@ -180,18 +217,20 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
 
   const conversationId = await getOrCreateConversation(senderId, receiverId);
 
-  const { error: stampErr } = await supabase.rpc('adjust_stamps', {
-    p_user_id: senderId,
-    p_amount: -stampCost,
-    p_type: 'message_sent',
-    p_description: `Message sent to ${receiverProfile.display_name}`,
-  });
-  if (stampErr) {
-    throw new Error(
-      stampErr.message.includes('Insufficient')
-        ? 'Not enough Stamps.'
-        : `Stamp error: ${stampErr.message}`
-    );
+  if (stampCost > 0) {
+    const { error: stampErr } = await supabase.rpc('adjust_stamps', {
+      p_user_id: senderId,
+      p_amount: -stampCost,
+      p_type: 'message_sent',
+      p_description: `Message sent to ${receiverProfile.display_name}`,
+    });
+    if (stampErr) {
+      throw new Error(
+        stampErr.message.includes('Insufficient')
+          ? 'Not enough Stamps.'
+          : `Stamp error: ${stampErr.message}`
+      );
+    }
   }
 
   const { data: message, error: msgErr } = await supabase
@@ -207,12 +246,14 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     .single();
 
   if (msgErr || !message) {
-    await supabase.rpc('adjust_stamps', {
-      p_user_id: senderId,
-      p_amount: stampCost,
-      p_type: 'failed_delivery_refund',
-      p_description: 'Refund after message creation failure',
-    });
+    if (stampCost > 0) {
+      await supabase.rpc('adjust_stamps', {
+        p_user_id: senderId,
+        p_amount: stampCost,
+        p_type: 'failed_delivery_refund',
+        p_description: 'Refund after message creation failure',
+      });
+    }
     throw new Error(
       msgErr?.message ? `Failed to create message: ${msgErr.message}` : 'Failed to create message.'
     );

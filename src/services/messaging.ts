@@ -131,6 +131,12 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     throw new Error('Not enough Stamps.');
   }
 
+  // Economy pause (admin setting)
+  const { data: paused } = await supabase.rpc('is_sending_paused');
+  if (paused === true) {
+    throw new Error('Sending is temporarily paused by an administrator. Try again later.');
+  }
+
   const weather = await getWeatherForRoute(
     senderProfile.latitude,
     senderProfile.longitude,

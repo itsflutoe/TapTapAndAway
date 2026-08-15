@@ -13,6 +13,7 @@ import AdminPage from './pages/AdminPage';
 import DeliveryPage from './pages/DeliveryPage';
 import BottomNav from './components/BottomNav';
 import LoadingScreen from './components/LoadingScreen';
+import MaintenanceBanner from './components/MaintenanceBanner';
 
 function AdminUserModeBanner() {
   const { profile, isAdminMode, setIsAdminMode } = useAuth();
@@ -73,6 +74,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return (
     <>
       <AdminUserModeBanner />
+      <MaintenanceBanner />
       {children}
     </>
   );

@@ -2,9 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { geocodeAddress } from '../lib/geo';
-import type { Profile, Delivery } from '../types';
+import type { Profile, Delivery, StampTransaction } from '../types';
 
-type Tab = 'dashboard' | 'users' | 'deliveries' | 'codes' | 'settings';
+type Tab =
+  | 'dashboard'
+  | 'live'
+  | 'users'
+  | 'ledger'
+  | 'deliveries'
+  | 'codes'
+  | 'broadcast'
+  | 'audit'
+  | 'settings';
 
 interface RedeemCode {
   id: string;
@@ -17,9 +26,41 @@ interface RedeemCode {
   created_at: string;
 }
 
+interface AuditRow {
+  id: string;
+  admin_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+interface LiveDelivery extends Delivery {
+  sender?: string;
+  receiver?: string;
+  overdue?: boolean;
+}
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'live', label: 'Live ops' },
+  { id: 'users', label: 'Users' },
+  { id: 'ledger', label: 'Stamp ledger' },
+  { id: 'deliveries', label: 'Deliveries' },
+  { id: 'codes', label: 'Codes' },
+  { id: 'broadcast', label: 'Broadcast' },
+  { id: 'audit', label: 'Audit log' },
+  { id: 'settings', label: 'Settings' },
+];
+
 export default function AdminPage() {
   const { profile, setIsAdminMode, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [navOpen, setNavOpen] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
   const [stats, setStats] = useState({
     users: 0,
     messages: 0,
@@ -27,15 +68,27 @@ export default function AdminPage() {
     delivered: 0,
     failed: 0,
     stamps: 0,
+    overdue: 0,
   });
+
   const [users, setUsers] = useState<Profile[]>([]);
   const [userQuery, setUserQuery] = useState('');
-  const [deliveries, setDeliveries] = useState<(Delivery & { sender?: string; receiver?: string })[]>([]);
+  const [drawerUser, setDrawerUser] = useState<Profile | null>(null);
+  const [drawerTx, setDrawerTx] = useState<StampTransaction[]>([]);
+  const [drawerDel, setDrawerDel] = useState<LiveDelivery[]>([]);
+  const [stampInput, setStampInput] = useState('10');
+  const [stampMode, setStampMode] = useState<'add' | 'set'>('add');
+
+  const [ledger, setLedger] = useState<(StampTransaction & { username?: string })[]>([]);
+  const [ledgerUser, setLedgerUser] = useState('');
+
+  const [live, setLive] = useState<LiveDelivery[]>([]);
+  const [deliveries, setDeliveries] = useState<LiveDelivery[]>([]);
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [newCode, setNewCode] = useState({ code: '', amount: 10, maxUses: '', expires: '' });
   const [settings, setSettings] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
+  const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [broadcast, setBroadcast] = useState({ title: '', message: '', userId: '' });
 
   const flash = (m: string, isErr = false) => {
     setMsg(isErr ? '' : m);
@@ -43,7 +96,42 @@ export default function AdminPage() {
     setTimeout(() => {
       setMsg('');
       setErr('');
-    }, 3500);
+    }, 4000);
+  };
+
+  const log = async (action: string, targetType?: string, targetId?: string, details?: object) => {
+    await supabase.rpc('admin_log', {
+      p_action: action,
+      p_target_type: targetType ?? null,
+      p_target_id: targetId ?? null,
+      p_details: details ?? {},
+    });
+  };
+
+  const enrichDeliveries = async (rows: Delivery[]): Promise<LiveDelivery[]> => {
+    const out: LiveDelivery[] = [];
+    const now = Date.now();
+    for (const d of rows) {
+      const { data: m } = await supabase
+        .from('messages')
+        .select('sender_id, receiver_id')
+        .eq('id', d.message_id)
+        .maybeSingle();
+      let sender = '';
+      let receiver = '';
+      if (m) {
+        const { data: s } = await supabase.from('profiles').select('username').eq('id', m.sender_id).maybeSingle();
+        const { data: r } = await supabase.from('profiles').select('username').eq('id', m.receiver_id).maybeSingle();
+        sender = s?.username || '';
+        receiver = r?.username || '';
+      }
+      const depart = d.actual_departure ? new Date(d.actual_departure).getTime() : 0;
+      const eta = depart + (d.estimated_duration_seconds || 0) * 1000;
+      const overdue =
+        ['DISPATCHED', 'FLYING', 'PREPARING'].includes(d.status) && depart > 0 && now > eta + 5000;
+      out.push({ ...d, sender, receiver, overdue });
+    }
+    return out;
   };
 
   const loadStats = useCallback(async () => {
@@ -52,7 +140,7 @@ export default function AdminPage() {
     const { count: flying } = await supabase
       .from('deliveries')
       .select('*', { count: 'exact', head: true })
-      .in('status', ['DISPATCHED', 'FLYING']);
+      .in('status', ['DISPATCHED', 'FLYING', 'PREPARING']);
     const { count: delivered } = await supabase
       .from('deliveries')
       .select('*', { count: 'exact', head: true })
@@ -63,6 +151,15 @@ export default function AdminPage() {
       .eq('status', 'FAILED');
     const { data: balances } = await supabase.from('profiles').select('stamp_balance');
     const stamps = (balances || []).reduce((s, row) => s + (row.stamp_balance || 0), 0);
+
+    const { data: active } = await supabase
+      .from('deliveries')
+      .select('*')
+      .in('status', ['DISPATCHED', 'FLYING', 'PREPARING'])
+      .limit(100);
+    const enriched = await enrichDeliveries((active as Delivery[]) || []);
+    const overdue = enriched.filter((d) => d.overdue).length;
+
     setStats({
       users: users || 0,
       messages: messages || 0,
@@ -70,6 +167,7 @@ export default function AdminPage() {
       delivered: delivered || 0,
       failed: failed || 0,
       stamps,
+      overdue,
     });
   }, []);
 
@@ -87,34 +185,75 @@ export default function AdminPage() {
     setUsers((data as Profile[]) || []);
   }, [userQuery]);
 
+  const openDrawer = async (u: Profile) => {
+    setDrawerUser(u);
+    setStampInput('10');
+    setStampMode('add');
+    const { data: tx } = await supabase
+      .from('stamp_transactions')
+      .select('*')
+      .eq('user_id', u.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    setDrawerTx((tx as StampTransaction[]) || []);
+
+    const { data: msgs } = await supabase
+      .from('messages')
+      .select('id')
+      .eq('sender_id', u.id)
+      .limit(30);
+    const ids = (msgs || []).map((m) => m.id);
+    if (ids.length) {
+      const { data: dels } = await supabase
+        .from('deliveries')
+        .select('*')
+        .in('message_id', ids)
+        .order('created_at', { ascending: false })
+        .limit(15);
+      setDrawerDel(await enrichDeliveries((dels as Delivery[]) || []));
+    } else {
+      setDrawerDel([]);
+    }
+  };
+
+  const loadLedger = useCallback(async () => {
+    const { data } = await supabase
+      .from('stamp_transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(80);
+    const rows: (StampTransaction & { username?: string })[] = [];
+    for (const tx of (data as StampTransaction[]) || []) {
+      const { data: p } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', tx.user_id)
+        .maybeSingle();
+      if (ledgerUser && p?.username && !p.username.includes(ledgerUser.toLowerCase()) && p.username !== ledgerUser) {
+        if (!p.username.toLowerCase().includes(ledgerUser.toLowerCase())) continue;
+      }
+      rows.push({ ...tx, username: p?.username });
+    }
+    setLedger(rows);
+  }, [ledgerUser]);
+
+  const loadLive = useCallback(async () => {
+    const { data } = await supabase
+      .from('deliveries')
+      .select('*')
+      .in('status', ['DISPATCHED', 'FLYING', 'PREPARING'])
+      .order('created_at', { ascending: false })
+      .limit(40);
+    setLive(await enrichDeliveries((data as Delivery[]) || []));
+  }, []);
+
   const loadDeliveries = useCallback(async () => {
     const { data } = await supabase
       .from('deliveries')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(40);
-    if (!data) {
-      setDeliveries([]);
-      return;
-    }
-    const rows: (Delivery & { sender?: string; receiver?: string })[] = [];
-    for (const d of data as Delivery[]) {
-      const { data: m } = await supabase
-        .from('messages')
-        .select('sender_id, receiver_id')
-        .eq('id', d.message_id)
-        .maybeSingle();
-      let sender = '';
-      let receiver = '';
-      if (m) {
-        const { data: s } = await supabase.from('profiles').select('username').eq('id', m.sender_id).maybeSingle();
-        const { data: r } = await supabase.from('profiles').select('username').eq('id', m.receiver_id).maybeSingle();
-        sender = s?.username || '';
-        receiver = r?.username || '';
-      }
-      rows.push({ ...d, sender, receiver });
-    }
-    setDeliveries(rows);
+    setDeliveries(await enrichDeliveries((data as Delivery[]) || []));
   }, []);
 
   const loadCodes = useCallback(async () => {
@@ -135,13 +274,25 @@ export default function AdminPage() {
     setSettings(map);
   }, []);
 
+  const loadAudit = useCallback(async () => {
+    const { data } = await supabase
+      .from('admin_audit_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    setAudit((data as AuditRow[]) || []);
+  }, []);
+
   useEffect(() => {
     if (tab === 'dashboard') void loadStats();
     if (tab === 'users') void loadUsers();
+    if (tab === 'ledger') void loadLedger();
+    if (tab === 'live') void loadLive();
     if (tab === 'deliveries') void loadDeliveries();
     if (tab === 'codes') void loadCodes();
     if (tab === 'settings') void loadSettings();
-  }, [tab, loadStats, loadUsers, loadDeliveries, loadCodes, loadSettings]);
+    if (tab === 'audit') void loadAudit();
+  }, [tab, loadStats, loadUsers, loadLedger, loadLive, loadDeliveries, loadCodes, loadSettings, loadAudit]);
 
   if (!profile?.is_admin) {
     return (
@@ -151,31 +302,62 @@ export default function AdminPage() {
     );
   }
 
+  const applyStamps = async (userId: string) => {
+    const n = Number(stampInput);
+    if (!Number.isFinite(n) || n === 0) {
+      flash('Enter a non-zero number', true);
+      return;
+    }
+    if (stampMode === 'set') {
+      if (n < 0) {
+        flash('Balance cannot be negative', true);
+        return;
+      }
+      const { error } = await supabase.rpc('admin_set_stamps', {
+        p_user_id: userId,
+        p_amount: Math.round(n),
+        p_description: 'Admin set balance',
+      });
+      if (error) flash(error.message, true);
+      else {
+        flash(`Balance set to ${Math.round(n)}`);
+        void loadUsers();
+        if (drawerUser?.id === userId) {
+          const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+          if (data) void openDrawer(data as Profile);
+        }
+      }
+    } else {
+      const { error } = await supabase.rpc('admin_adjust_stamps', {
+        p_user_id: userId,
+        p_delta: Math.round(n),
+        p_description: `Admin adjustment ${n > 0 ? '+' : ''}${Math.round(n)}`,
+      });
+      if (error) flash(error.message, true);
+      else {
+        flash(`Adjusted by ${Math.round(n) > 0 ? '+' : ''}${Math.round(n)}`);
+        void loadUsers();
+        if (drawerUser?.id === userId) {
+          const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+          if (data) void openDrawer(data as Profile);
+        }
+      }
+    }
+  };
+
   const ban = async (id: string, banned: boolean) => {
     const { error } = await supabase.rpc('admin_set_banned', { p_user_id: id, p_banned: banned });
     if (error) flash(error.message, true);
     else {
+      await log(banned ? 'ban' : 'unban', 'user', id);
       flash(banned ? 'User banned' : 'User unbanned');
       void loadUsers();
-    }
-  };
-
-  const adjustStamps = async (id: string, delta: number) => {
-    const { error } = await supabase.rpc('admin_adjust_stamps', {
-      p_user_id: id,
-      p_delta: delta,
-      p_description: `Admin ${delta > 0 ? 'added' : 'removed'} stamps`,
-    });
-    if (error) flash(error.message, true);
-    else {
-      flash(`Stamps adjusted by ${delta}`);
-      void loadUsers();
-      void loadStats();
+      if (drawerUser?.id === id) setDrawerUser((u) => (u ? { ...u, is_banned: banned } : u));
     }
   };
 
   const changeAddress = async (id: string, current: string) => {
-    const next = window.prompt('New address for this user:', current);
+    const next = window.prompt('New address:', current);
     if (next == null || !next.trim()) return;
     const geo = await geocodeAddress(next.trim());
     if (!geo) {
@@ -190,7 +372,8 @@ export default function AdminPage() {
     });
     if (error) flash(error.message, true);
     else {
-      flash(`Address updated → ${geo.display_name}`);
+      await log('set_address', 'user', id, { address: next.trim() });
+      flash('Address updated');
       void loadUsers();
     }
   };
@@ -199,7 +382,9 @@ export default function AdminPage() {
     const { error } = await supabase.rpc('admin_force_deliver', { p_delivery_id: id });
     if (error) flash(error.message, true);
     else {
+      await log('force_deliver', 'delivery', id);
       flash('Delivery forced');
+      void loadLive();
       void loadDeliveries();
       void loadStats();
     }
@@ -212,7 +397,9 @@ export default function AdminPage() {
     });
     if (error) flash(error.message, true);
     else {
-      flash('Delivery cancelled + refunded');
+      await log('cancel_delivery', 'delivery', id);
+      flash('Cancelled + refunded');
+      void loadLive();
       void loadDeliveries();
       void loadStats();
     }
@@ -228,6 +415,7 @@ export default function AdminPage() {
     });
     if (error) flash(error.message, true);
     else {
+      await log('create_code', 'code', undefined, { code: newCode.code });
       flash('Code created');
       setNewCode({ code: '', amount: 10, maxUses: '', expires: '' });
       void loadCodes();
@@ -235,12 +423,10 @@ export default function AdminPage() {
   };
 
   const toggleCode = async (c: RedeemCode) => {
-    const { error } = await supabase
-      .from('redeem_codes')
-      .update({ is_active: !c.is_active })
-      .eq('id', c.id);
+    const { error } = await supabase.from('redeem_codes').update({ is_active: !c.is_active }).eq('id', c.id);
     if (error) flash(error.message, true);
     else {
+      await log(c.is_active ? 'disable_code' : 'enable_code', 'code', c.id);
       flash(c.is_active ? 'Code disabled' : 'Code enabled');
       void loadCodes();
     }
@@ -253,324 +439,630 @@ export default function AdminPage() {
     } catch {
       value = settings[key];
     }
-    const { error } = await supabase.rpc('admin_set_setting', {
-      p_key: key,
-      p_value: value,
-    });
+    const { error } = await supabase.rpc('admin_set_setting', { p_key: key, p_value: value });
     if (error) flash(error.message, true);
-    else flash(`Saved ${key}`);
+    else {
+      await log('set_setting', 'setting', undefined, { key, value });
+      flash(`Saved ${key}`);
+    }
   };
 
-  const tabBtn = (id: Tab, label: string) => (
-    <button
-      key={id}
-      type="button"
-      onClick={() => setTab(id)}
-      style={{
-        padding: '8px 12px',
-        borderRadius: 8,
-        fontWeight: 600,
-        fontSize: 13,
-        background: tab === id ? '#0071e3' : '#eee',
-        color: tab === id ? '#fff' : '#333',
-      }}
-    >
-      {label}
-    </button>
-  );
+  const sendBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcast.title.trim() || !broadcast.message.trim()) {
+      flash('Title and message required', true);
+      return;
+    }
+    const { data, error } = await supabase.rpc('admin_broadcast', {
+      p_title: broadcast.title.trim(),
+      p_message: broadcast.message.trim(),
+      p_user_id: broadcast.userId.trim() || null,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(`Sent to ${data} user(s)`);
+      setBroadcast({ title: '', message: '', userId: '' });
+      void loadAudit();
+    }
+  };
+
+  const shell: React.CSSProperties = {
+    display: 'flex',
+    minHeight: '100vh',
+    background: '#0f1115',
+    color: '#e8eaed',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+  };
+
+  const sidebar: React.CSSProperties = {
+    width: 220,
+    flexShrink: 0,
+    background: '#161a22',
+    borderRight: '1px solid #2a2f3a',
+    padding: '16px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  };
+
+  const main: React.CSSProperties = {
+    flex: 1,
+    minWidth: 0,
+    padding: '16px 16px 40px',
+    maxWidth: 1100,
+  };
+
+  const card: React.CSSProperties = {
+    background: '#1a1f29',
+    border: '1px solid #2a2f3a',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  };
+
+  const btn: React.CSSProperties = {
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: 'none',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: 13,
+    background: '#2a3242',
+    color: '#e8eaed',
+  };
+
+  const btnPrimary: React.CSSProperties = { ...btn, background: '#3b82f6', color: '#fff' };
+  const btnDanger: React.CSSProperties = { ...btn, background: '#7f1d1d', color: '#fecaca' };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: 8,
+    border: '1px solid #2a2f3a',
+    background: '#0f1115',
+    color: '#e8eaed',
+    fontSize: 14,
+  };
+
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: 16, paddingBottom: 40 }}>
-      <header
+    <div style={shell}>
+      {/* Mobile top bar */}
+      <div
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
+          display: isMobile ? 'flex' : 'none',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 50,
+          background: '#161a22',
+          padding: '12px 16px',
           alignItems: 'center',
-          marginBottom: 16,
-          flexWrap: 'wrap',
-          gap: 8,
+          justifyContent: 'space-between',
+          borderBottom: '1px solid #2a2f3a',
         }}
       >
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Admin Panel</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ padding: '8px 12px' }}
-            onClick={() => setIsAdminMode(false)}
-          >
-            Enter User Mode
-          </button>
-          <button
-            type="button"
-            className="btn"
-            style={{ padding: '8px 12px', color: 'var(--danger)' }}
-            onClick={() => signOut()}
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-        {tabBtn('dashboard', 'Dashboard')}
-        {tabBtn('users', 'Users')}
-        {tabBtn('deliveries', 'Deliveries')}
-        {tabBtn('codes', 'Redeem codes')}
-        {tabBtn('settings', 'Settings')}
+        <strong>Admin</strong>
+        <button type="button" style={btn} onClick={() => setNavOpen((v) => !v)}>
+          Menu
+        </button>
       </div>
 
-      {(msg || err) && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 10,
-            background: err ? '#fff5f5' : '#e8f8ee',
-            color: err ? 'var(--danger)' : '#1a7f37',
-            fontSize: 14,
-          }}
-        >
-          {err || msg}
-        </div>
-      )}
+      {/* Sidebar */}
+      <aside
+        style={{
+          ...sidebar,
+          display: isMobile ? (navOpen ? 'flex' : 'none') : 'flex',
+          position: isMobile ? 'fixed' : 'sticky',
+          top: 0,
+          left: 0,
+          bottom: 0,
+          zIndex: 40,
+          height: '100vh',
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 16, padding: '8px 10px 16px' }}>🐦 Admin</div>
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => {
+              setTab(t.id);
+              setNavOpen(false);
+            }}
+            style={{
+              ...btn,
+              textAlign: 'left',
+              background: tab === t.id ? '#3b82f6' : 'transparent',
+              color: tab === t.id ? '#fff' : '#a0a8b8',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <button type="button" style={btn} onClick={() => setIsAdminMode(false)}>
+          User mode
+        </button>
+        <button type="button" style={{ ...btnDanger, marginTop: 6 }} onClick={() => signOut()}>
+          Sign out
+        </button>
+      </aside>
 
-      {tab === 'dashboard' && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: 12,
-          }}
-        >
-          <StatCard label="Users" value={stats.users} />
-          <StatCard label="Messages" value={stats.messages} />
-          <StatCard label="Flying" value={stats.flying} />
-          <StatCard label="Delivered" value={stats.delivered} />
-          <StatCard label="Failed" value={stats.failed} />
-          <StatCard label="Stamps in circ." value={stats.stamps} />
-        </div>
-      )}
-
-      {tab === 'users' && (
-        <div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <input
-              value={userQuery}
-              onChange={(e) => setUserQuery(e.target.value)}
-              placeholder="Search username, display name, PID"
-              style={{ flex: 1, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)' }}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ width: 'auto', padding: '10px 16px' }}
-              onClick={() => void loadUsers()}
-            >
-              Search
-            </button>
+      <main style={{ ...main, paddingTop: isMobile ? 64 : 16 }}>
+        {(msg || err) && (
+          <div
+            style={{
+              ...card,
+              background: err ? '#3f1a1a' : '#14301f',
+              borderColor: err ? '#7f1d1d' : '#1a5c34',
+              color: err ? '#fecaca' : '#86efac',
+            }}
+          >
+            {err || msg}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {users.map((u) => (
-              <div key={u.id} className="card" style={{ fontSize: 14 }}>
+        )}
+
+        {tab === 'dashboard' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 16 }}>Dashboard</h1>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <Stat label="Users" value={stats.users} />
+              <Stat label="Messages" value={stats.messages} />
+              <Stat label="Flying" value={stats.flying} />
+              <Stat label="Overdue" value={stats.overdue} alert={stats.overdue > 0} />
+              <Stat label="Delivered" value={stats.delivered} />
+              <Stat label="Failed" value={stats.failed} />
+              <Stat label="Stamps" value={stats.stamps} />
+            </div>
+            {stats.overdue > 0 && (
+              <div style={{ ...card, marginTop: 16 }}>
+                <strong>{stats.overdue} overdue flight(s)</strong>
+                <p style={{ fontSize: 13, color: '#a0a8b8', marginTop: 6 }}>
+                  Open Live ops to force-deliver or cancel.
+                </p>
+                <button type="button" style={{ ...btnPrimary, marginTop: 10 }} onClick={() => setTab('live')}>
+                  Open Live ops
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === 'live' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Live ops</h1>
+              <button type="button" style={btn} onClick={() => void loadLive()}>
+                Refresh
+              </button>
+            </div>
+            {live.length === 0 && <p style={{ color: '#a0a8b8' }}>No active flights.</p>}
+            {live.map((d) => (
+              <div key={d.id} style={{ ...card, borderColor: d.overdue ? '#7f1d1d' : '#2a2f3a' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                   <div>
-                    <strong>{u.display_name}</strong> @{u.username}
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {u.pigeon_id} · 🪙 {u.stamp_balance}
-                      {u.is_banned ? ' · BANNED' : ''}
-                      {u.is_admin ? ' · ADMIN' : ''}
+                    <strong>
+                      @{d.sender} → @{d.receiver}
+                    </strong>
+                    {d.overdue && (
+                      <span style={{ marginLeft: 8, color: '#fca5a5', fontSize: 12, fontWeight: 700 }}>
+                        OVERDUE
+                      </span>
+                    )}
+                    <div style={{ fontSize: 13, color: '#a0a8b8', marginTop: 4 }}>
+                      {d.distance_km} km · {d.weather} · {d.status} · {d.estimated_duration_seconds}s ETA
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{u.address}</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 10px', width: 'auto' }}
-                      onClick={() => void adjustStamps(u.id, 10)}
-                    >
-                      +10
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" style={btnPrimary} onClick={() => void forceDeliver(d.id)}>
+                      Force
                     </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 10px', width: 'auto' }}
-                      onClick={() => void adjustStamps(u.id, -10)}
-                    >
-                      −10
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 10px', width: 'auto' }}
-                      onClick={() => void ban(u.id, !u.is_banned)}
-                    >
-                      {u.is_banned ? 'Unban' : 'Ban'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 10px', width: 'auto' }}
-                      onClick={() => void changeAddress(u.id, u.address)}
-                    >
-                      Address
+                    <button type="button" style={btnDanger} onClick={() => void cancelDelivery(d.id)}>
+                      Cancel
                     </button>
                   </div>
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
+          </>
+        )}
 
-      {tab === 'deliveries' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {deliveries.map((d) => (
-            <div key={d.id} className="card" style={{ fontSize: 13 }}>
-              <div style={{ fontWeight: 600 }}>
-                {d.sender} → {d.receiver} · {d.status}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>
-                {d.distance_km} km · {d.weather} · {d.estimated_duration_seconds}s
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                {d.status !== 'DELIVERED' && d.status !== 'READ' && d.status !== 'FAILED' && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    style={{ padding: '6px 10px', width: 'auto' }}
-                    onClick={() => void forceDeliver(d.id)}
-                  >
-                    Force deliver
-                  </button>
-                )}
-                {d.status !== 'FAILED' && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ padding: '6px 10px', width: 'auto' }}
-                    onClick={() => void cancelDelivery(d.id)}
-                  >
-                    Cancel + refund
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          {deliveries.length === 0 && (
-            <p style={{ color: 'var(--text-secondary)' }}>No deliveries yet.</p>
-          )}
-        </div>
-      )}
-
-      {tab === 'codes' && (
-        <div>
-          <form onSubmit={(e) => void createCode(e)} className="card" style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 10 }}>Create redeem code</h2>
-            <div className="input-group">
-              <label>Code</label>
+        {tab === 'users' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Users</h1>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <input
-                value={newCode.code}
-                onChange={(e) => setNewCode({ ...newCode, code: e.target.value.toUpperCase() })}
-                required
-                placeholder="WELCOME10"
+                style={inputStyle}
+                value={userQuery}
+                onChange={(e) => setUserQuery(e.target.value)}
+                placeholder="Search username, name, PID"
               />
-            </div>
-            <div className="input-group">
-              <label>Stamp amount</label>
-              <input
-                type="number"
-                min={1}
-                value={newCode.amount}
-                onChange={(e) => setNewCode({ ...newCode, amount: Number(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="input-group">
-              <label>Max uses (empty = unlimited)</label>
-              <input
-                type="number"
-                min={1}
-                value={newCode.maxUses}
-                onChange={(e) => setNewCode({ ...newCode, maxUses: e.target.value })}
-                placeholder="Unlimited"
-              />
-            </div>
-            <div className="input-group">
-              <label>Expires (optional)</label>
-              <input
-                type="datetime-local"
-                value={newCode.expires}
-                onChange={(e) => setNewCode({ ...newCode, expires: e.target.value })}
-              />
-            </div>
-            <button type="submit" className="btn btn-primary">
-              Create code
-            </button>
-          </form>
-
-          {codes.map((c) => (
-            <div key={c.id} className="card" style={{ marginBottom: 8, fontSize: 14 }}>
-              <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
-              <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>
-                +{c.stamp_amount} stamps · used {c.used_count}
-                {c.max_uses != null ? `/${c.max_uses}` : ''}
-                {c.expires_at ? ` · expires ${new Date(c.expires_at).toLocaleString()}` : ''}
-                {c.is_active ? '' : ' · INACTIVE'}
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ marginTop: 8, padding: '6px 12px', width: 'auto' }}
-                onClick={() => void toggleCode(c)}
-              >
-                {c.is_active ? 'Disable' : 'Enable'}
+              <button type="button" style={btnPrimary} onClick={() => void loadUsers()}>
+                Search
               </button>
             </div>
-          ))}
-        </div>
-      )}
-
-      {tab === 'settings' && (
-        <div className="card">
-          <h2 style={{ fontSize: 16, marginBottom: 12 }}>System settings</h2>
-          {['time_multiplier', 'failure_probability', 'daily_stamp_reward', 'pigeon_base_speed_mph', 'signup_stamp_bonus'].map(
-            (key) => (
-              <div key={key} className="input-group">
-                <label>{key}</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    value={settings[key] ?? ''}
-                    onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
+            {users.map((u) => (
+              <div key={u.id} style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                   <button
                     type="button"
-                    className="btn btn-secondary"
-                    style={{ width: 'auto', padding: '10px 14px' }}
-                    onClick={() => void saveSetting(key)}
+                    onClick={() => void openDrawer(u)}
+                    style={{ background: 'none', border: 'none', color: '#e8eaed', textAlign: 'left', cursor: 'pointer', padding: 0 }}
                   >
-                    Save
+                    <strong>{u.display_name}</strong> @{u.username}
+                    <div style={{ fontSize: 12, color: '#a0a8b8' }}>
+                      {u.pigeon_id} · 🪙 {u.stamp_balance}
+                      {u.is_banned ? ' · BANNED' : ''}
+                      {u.is_admin ? ' · ADMIN' : ''}
+                    </div>
+                  </button>
+                  <button type="button" style={btn} onClick={() => void openDrawer(u)}>
+                    Details
                   </button>
                 </div>
               </div>
-            )
-          )}
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
-            time_multiplier: 3600 = fast testing. Set to 1 for real time.
-          </p>
+            ))}
+          </>
+        )}
+
+        {tab === 'ledger' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Stamp ledger</h1>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <input
+                style={inputStyle}
+                value={ledgerUser}
+                onChange={(e) => setLedgerUser(e.target.value)}
+                placeholder="Filter by username (optional)"
+              />
+              <button type="button" style={btnPrimary} onClick={() => void loadLedger()}>
+                Refresh
+              </button>
+            </div>
+            {ledger.map((tx) => (
+              <div key={tx.id} style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <strong>@{tx.username || '—'}</strong>
+                  <span style={{ color: tx.amount >= 0 ? '#86efac' : '#fca5a5', fontWeight: 700 }}>
+                    {tx.amount >= 0 ? '+' : ''}
+                    {tx.amount}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: '#a0a8b8', marginTop: 4 }}>
+                  {tx.transaction_type} · {tx.description || '—'} ·{' '}
+                  {new Date(tx.created_at).toLocaleString()}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'deliveries' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Deliveries</h1>
+              <button type="button" style={btn} onClick={() => void loadDeliveries()}>
+                Refresh
+              </button>
+            </div>
+            {deliveries.map((d) => (
+              <div key={d.id} style={card}>
+                <strong>
+                  @{d.sender} → @{d.receiver}
+                </strong>
+                <div style={{ fontSize: 13, color: '#a0a8b8', marginTop: 4 }}>
+                  {d.status} · {d.distance_km} km · {d.weather}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  {!['DELIVERED', 'READ', 'FAILED'].includes(d.status) && (
+                    <button type="button" style={btnPrimary} onClick={() => void forceDeliver(d.id)}>
+                      Force
+                    </button>
+                  )}
+                  {d.status !== 'FAILED' && (
+                    <button type="button" style={btnDanger} onClick={() => void cancelDelivery(d.id)}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'codes' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Redeem codes</h1>
+            <form onSubmit={(e) => void createCode(e)} style={card}>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Code</label>
+                <input
+                  style={inputStyle}
+                  value={newCode.code}
+                  onChange={(e) => setNewCode({ ...newCode, code: e.target.value.toUpperCase() })}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Stamps</label>
+                <input
+                  style={inputStyle}
+                  type="number"
+                  min={1}
+                  value={newCode.amount}
+                  onChange={(e) => setNewCode({ ...newCode, amount: Number(e.target.value) })}
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Max uses (empty = ∞)</label>
+                <input
+                  style={inputStyle}
+                  type="number"
+                  value={newCode.maxUses}
+                  onChange={(e) => setNewCode({ ...newCode, maxUses: e.target.value })}
+                />
+              </div>
+              <button type="submit" style={btnPrimary}>
+                Create
+              </button>
+            </form>
+            {codes.map((c) => (
+              <div key={c.id} style={card}>
+                <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
+                <div style={{ fontSize: 13, color: '#a0a8b8' }}>
+                  +{c.stamp_amount} · used {c.used_count}
+                  {c.max_uses != null ? `/${c.max_uses}` : ''}
+                  {!c.is_active ? ' · OFF' : ''}
+                </div>
+                <button type="button" style={{ ...btn, marginTop: 8 }} onClick={() => void toggleCode(c)}>
+                  {c.is_active ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'broadcast' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Broadcast</h1>
+            <form onSubmit={(e) => void sendBroadcast(e)} style={card}>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Title</label>
+                <input
+                  style={inputStyle}
+                  value={broadcast.title}
+                  onChange={(e) => setBroadcast({ ...broadcast, title: e.target.value })}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Message</label>
+                <textarea
+                  style={{ ...inputStyle, minHeight: 100 }}
+                  value={broadcast.message}
+                  onChange={(e) => setBroadcast({ ...broadcast, message: e.target.value })}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>
+                  User ID (optional — leave empty for everyone)
+                </label>
+                <input
+                  style={inputStyle}
+                  value={broadcast.userId}
+                  onChange={(e) => setBroadcast({ ...broadcast, userId: e.target.value })}
+                  placeholder="uuid or empty"
+                />
+              </div>
+              <button type="submit" style={btnPrimary}>
+                Send notification
+              </button>
+            </form>
+          </>
+        )}
+
+        {tab === 'audit' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Audit log</h1>
+              <button type="button" style={btn} onClick={() => void loadAudit()}>
+                Refresh
+              </button>
+            </div>
+            {audit.length === 0 && <p style={{ color: '#a0a8b8' }}>No audit entries yet.</p>}
+            {audit.map((a) => (
+              <div key={a.id} style={card}>
+                <strong>{a.action}</strong>
+                <div style={{ fontSize: 12, color: '#a0a8b8', marginTop: 4 }}>
+                  {a.target_type || '—'} {a.target_id ? `· ${a.target_id.slice(0, 8)}…` : ''} ·{' '}
+                  {new Date(a.created_at).toLocaleString()}
+                </div>
+                {a.details && Object.keys(a.details).length > 0 && (
+                  <pre
+                    style={{
+                      fontSize: 11,
+                      color: '#8b93a7',
+                      marginTop: 6,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {JSON.stringify(a.details)}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'settings' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Settings</h1>
+            <div style={card}>
+              {[
+                'time_multiplier',
+                'failure_probability',
+                'daily_stamp_reward',
+                'pigeon_base_speed_mph',
+                'signup_stamp_bonus',
+                'sending_paused',
+                'max_stamps_per_user',
+                'max_sends_per_hour',
+              ].map((key) => (
+                <div key={key} style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>{key}</label>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                    <input
+                      style={inputStyle}
+                      value={settings[key] ?? ''}
+                      onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
+                    />
+                    <button type="button" style={btnPrimary} onClick={() => void saveSetting(key)}>
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <p style={{ fontSize: 12, color: '#a0a8b8' }}>
+                time_multiplier: 1 = real time · 3600 = fast test. sending_paused: true blocks new
+                sends (enforce in next phase on client).
+              </p>
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* User detail drawer */}
+      {drawerUser && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.55)',
+            zIndex: 60,
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+          onClick={() => setDrawerUser(null)}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              background: '#161a22',
+              height: '100%',
+              overflowY: 'auto',
+              padding: 20,
+              borderLeft: '1px solid #2a2f3a',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 18 }}>{drawerUser.display_name}</h2>
+              <button type="button" style={btn} onClick={() => setDrawerUser(null)}>
+                Close
+              </button>
+            </div>
+            <p style={{ fontSize: 13, color: '#a0a8b8' }}>
+              @{drawerUser.username} · {drawerUser.pigeon_id}
+            </p>
+            <p style={{ fontSize: 13, color: '#a0a8b8' }}>{drawerUser.address}</p>
+            <p style={{ marginTop: 8 }}>
+              🪙 <strong>{drawerUser.stamp_balance}</strong>
+              {drawerUser.is_banned ? ' · BANNED' : ''}
+              {drawerUser.is_admin ? ' · ADMIN' : ''}
+            </p>
+
+            <div style={{ ...card, marginTop: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Stamps</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button
+                  type="button"
+                  style={{ ...btn, background: stampMode === 'add' ? '#3b82f6' : '#2a3242' }}
+                  onClick={() => setStampMode('add')}
+                >
+                  Add / subtract
+                </button>
+                <button
+                  type="button"
+                  style={{ ...btn, background: stampMode === 'set' ? '#3b82f6' : '#2a3242' }}
+                  onClick={() => setStampMode('set')}
+                >
+                  Set balance
+                </button>
+              </div>
+              <input
+                style={inputStyle}
+                type="number"
+                value={stampInput}
+                onChange={(e) => setStampInput(e.target.value)}
+                placeholder={stampMode === 'add' ? 'e.g. 25 or -10' : 'e.g. 100'}
+              />
+              <button
+                type="button"
+                style={{ ...btnPrimary, width: '100%', marginTop: 8 }}
+                onClick={() => void applyStamps(drawerUser.id)}
+              >
+                Apply
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              <button type="button" style={btnDanger} onClick={() => void ban(drawerUser.id, !drawerUser.is_banned)}>
+                {drawerUser.is_banned ? 'Unban' : 'Ban'}
+              </button>
+              <button type="button" style={btn} onClick={() => void changeAddress(drawerUser.id, drawerUser.address)}>
+                Change address
+              </button>
+            </div>
+
+            <h3 style={{ fontSize: 14, marginTop: 20 }}>Recent stamp txs</h3>
+            {drawerTx.map((tx) => (
+              <div key={tx.id} style={{ fontSize: 12, color: '#a0a8b8', padding: '6px 0', borderBottom: '1px solid #2a2f3a' }}>
+                <span style={{ color: tx.amount >= 0 ? '#86efac' : '#fca5a5' }}>
+                  {tx.amount >= 0 ? '+' : ''}
+                  {tx.amount}
+                </span>{' '}
+                {tx.transaction_type} · {tx.description || ''}
+              </div>
+            ))}
+
+            <h3 style={{ fontSize: 14, marginTop: 20 }}>Recent deliveries</h3>
+            {drawerDel.map((d) => (
+              <div key={d.id} style={{ fontSize: 12, color: '#a0a8b8', padding: '6px 0', borderBottom: '1px solid #2a2f3a' }}>
+                {d.status} · {d.distance_km} km · → @{d.receiver}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, alert }: { label: string; value: number; alert?: boolean }) {
   return (
-    <div className="card" style={{ textAlign: 'center', padding: 16 }}>
-      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{label}</div>
+    <div
+      style={{
+        background: alert ? '#3f1a1a' : '#1a1f29',
+        border: `1px solid ${alert ? '#7f1d1d' : '#2a2f3a'}`,
+        borderRadius: 12,
+        padding: 14,
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 22, fontWeight: 800 }}>{value}</div>
+      <div style={{ fontSize: 11, color: '#a0a8b8' }}>{label}</div>
     </div>
   );
 }

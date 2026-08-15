@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Profile, Friendship } from '../types';
 import PageHeader from '../components/PageHeader';
+import ReportModal from '../components/ReportModal';
 
 export default function FriendsPage() {
   const { user } = useAuth();
@@ -11,6 +12,7 @@ export default function FriendsPage() {
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [msg, setMsg] = useState('');
+  const [reportTarget, setReportTarget] = useState<{ id: string; username: string } | null>(null);
 
   const load = async () => {
     if (!user) return;
@@ -121,8 +123,24 @@ export default function FriendsPage() {
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
             {f.other.address}
           </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ padding: '6px 10px', marginTop: 8, fontSize: 12 }}
+            onClick={() => setReportTarget({ id: f.other.id, username: f.other.username })}
+          >
+            Report
+          </button>
         </div>
       ))}
+
+      {reportTarget && (
+        <ReportModal
+          reportedUserId={reportTarget.id}
+          reportedUsername={reportTarget.username}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
     </div>
   );
 }

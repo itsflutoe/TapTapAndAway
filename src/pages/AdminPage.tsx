@@ -10,7 +10,9 @@ type Tab =
   | 'users'
   | 'ledger'
   | 'deliveries'
+  | 'moderation'
   | 'codes'
+  | 'growth'
   | 'broadcast'
   | 'audit'
   | 'settings';
@@ -24,6 +26,30 @@ interface RedeemCode {
   expires_at: string | null;
   is_active: boolean;
   created_at: string;
+}
+
+interface ReportRow {
+  id: string;
+  reporter_id: string | null;
+  reported_user_id: string | null;
+  message_id: string | null;
+  reason: string;
+  details: string | null;
+  status: string;
+  admin_note: string | null;
+  created_at: string;
+  reporter?: string;
+  reported?: string;
+}
+
+interface RedemptionRow {
+  id: string;
+  code_id: string;
+  user_id: string;
+  stamp_amount: number;
+  created_at: string;
+  username?: string;
+  code?: string;
 }
 
 interface AuditRow {
@@ -48,7 +74,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'users', label: 'Users' },
   { id: 'ledger', label: 'Stamp ledger' },
   { id: 'deliveries', label: 'Deliveries' },
+  { id: 'moderation', label: 'Moderation' },
   { id: 'codes', label: 'Codes' },
+  { id: 'growth', label: 'Growth' },
   { id: 'broadcast', label: 'Broadcast' },
   { id: 'audit', label: 'Audit log' },
   { id: 'settings', label: 'Settings' },
@@ -86,6 +114,18 @@ export default function AdminPage() {
   const [deliveries, setDeliveries] = useState<LiveDelivery[]>([]);
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [newCode, setNewCode] = useState({ code: '', amount: 10, maxUses: '', expires: '' });
+  const [bulk, setBulk] = useState({ prefix: 'EVENT', count: 10, amount: 5, maxUses: 1 });
+  const [codeAnalytics, setCodeAnalytics] = useState<RedemptionRow[]>([]);
+  const [selectedCodeId, setSelectedCodeId] = useState<string | null>(null);
+  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [reportFilter, setReportFilter] = useState<'open' | 'all'>('open');
+  const [growth, setGrowth] = useState({
+    signups7d: 0,
+    messages7d: 0,
+    delivers7d: 0,
+    tutorialDone: 0,
+    banned: 0,
+  });
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [broadcast, setBroadcast] = useState({ title: '', message: '', userId: '' });
@@ -283,6 +323,86 @@ export default function AdminPage() {
     setAudit((data as AuditRow[]) || []);
   }, []);
 
+  const loadReports = useCallback(async () => {
+    let q = supabase.from('user_reports').select('*').order('created_at', { ascending: false }).limit(50);
+    if (reportFilter === 'open') {
+      q = supabase
+        .from('user_reports')
+        .select('*')
+        .in('status', ['open', 'reviewing'])
+        .order('created_at', { ascending: false })
+        .limit(50);
+    }
+    const { data } = await q;
+    const rows: ReportRow[] = [];
+    for (const r of (data as ReportRow[]) || []) {
+      let reporter = '';
+      let reported = '';
+      if (r.reporter_id) {
+        const { data: p } = await supabase.from('profiles').select('username').eq('id', r.reporter_id).maybeSingle();
+        reporter = p?.username || '';
+      }
+      if (r.reported_user_id) {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', r.reported_user_id)
+          .maybeSingle();
+        reported = p?.username || '';
+      }
+      rows.push({ ...r, reporter, reported });
+    }
+    setReports(rows);
+  }, [reportFilter]);
+
+  const loadGrowth = useCallback(async () => {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { count: signups7d } = await supabase
+      .from('profiles')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', since);
+    const { count: messages7d } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', since);
+    const { count: delivers7d } = await supabase
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['DELIVERED', 'READ'])
+      .gte('created_at', since);
+    const { count: tutorialDone } = await supabase
+      .from('profiles')
+      .select('*', { count: 'exact', head: true })
+      .eq('tutorial_completed', true);
+    const { count: banned } = await supabase
+      .from('profiles')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_banned', true);
+    setGrowth({
+      signups7d: signups7d || 0,
+      messages7d: messages7d || 0,
+      delivers7d: delivers7d || 0,
+      tutorialDone: tutorialDone || 0,
+      banned: banned || 0,
+    });
+  }, []);
+
+  const loadCodeAnalytics = async (codeId: string) => {
+    setSelectedCodeId(codeId);
+    const { data } = await supabase
+      .from('redeem_code_redemptions')
+      .select('*')
+      .eq('code_id', codeId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    const rows: RedemptionRow[] = [];
+    for (const r of (data as RedemptionRow[]) || []) {
+      const { data: p } = await supabase.from('profiles').select('username').eq('id', r.user_id).maybeSingle();
+      rows.push({ ...r, username: p?.username });
+    }
+    setCodeAnalytics(rows);
+  };
+
   useEffect(() => {
     if (tab === 'dashboard') void loadStats();
     if (tab === 'users') void loadUsers();
@@ -292,7 +412,21 @@ export default function AdminPage() {
     if (tab === 'codes') void loadCodes();
     if (tab === 'settings') void loadSettings();
     if (tab === 'audit') void loadAudit();
-  }, [tab, loadStats, loadUsers, loadLedger, loadLive, loadDeliveries, loadCodes, loadSettings, loadAudit]);
+    if (tab === 'moderation') void loadReports();
+    if (tab === 'growth') void loadGrowth();
+  }, [
+    tab,
+    loadStats,
+    loadUsers,
+    loadLedger,
+    loadLive,
+    loadDeliveries,
+    loadCodes,
+    loadSettings,
+    loadAudit,
+    loadReports,
+    loadGrowth,
+  ]);
 
   if (!profile?.is_admin) {
     return (
@@ -422,6 +556,22 @@ export default function AdminPage() {
     }
   };
 
+  const bulkCreateCodes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { data, error } = await supabase.rpc('admin_bulk_create_codes', {
+      p_prefix: bulk.prefix.trim(),
+      p_count: Math.round(bulk.count),
+      p_stamp_amount: Math.round(bulk.amount),
+      p_max_uses: Math.round(bulk.maxUses),
+      p_expires_at: null,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(`Created ${(data as string[])?.length || 0} codes`);
+      void loadCodes();
+    }
+  };
+
   const toggleCode = async (c: RedeemCode) => {
     const { error } = await supabase.from('redeem_codes').update({ is_active: !c.is_active }).eq('id', c.id);
     if (error) flash(error.message, true);
@@ -430,6 +580,97 @@ export default function AdminPage() {
       flash(c.is_active ? 'Code disabled' : 'Code enabled');
       void loadCodes();
     }
+  };
+
+  const resolveReport = async (id: string, status: 'reviewing' | 'resolved' | 'dismissed') => {
+    const note =
+      status === 'resolved' || status === 'dismissed'
+        ? window.prompt('Admin note (optional):') ?? undefined
+        : undefined;
+    const { error } = await supabase.rpc('admin_resolve_report', {
+      p_report_id: id,
+      p_status: status,
+      p_admin_note: note || null,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(`Report ${status}`);
+      void loadReports();
+    }
+  };
+
+  const bulkForceOverdue = async () => {
+    if (!window.confirm('Force-complete all overdue flying deliveries?')) return;
+    const { data, error } = await supabase.rpc('admin_bulk_force_overdue');
+    if (error) flash(error.message, true);
+    else {
+      flash(`Forced ${data} deliveries`);
+      void loadLive();
+      void loadDeliveries();
+      void loadStats();
+    }
+  };
+
+  const bulkCancelOverdue = async () => {
+    if (!window.confirm('Cancel + refund all overdue flying deliveries?')) return;
+    const { data, error } = await supabase.rpc('admin_bulk_cancel_overdue');
+    if (error) flash(error.message, true);
+    else {
+      flash(`Cancelled ${data} deliveries`);
+      void loadLive();
+      void loadDeliveries();
+      void loadStats();
+    }
+  };
+
+  const downloadCsv = (filename: string, rows: string[][]) => {
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportUsersCsv = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('username,display_name,pigeon_id,stamp_balance,address,is_banned,created_at')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    const header = ['username', 'display_name', 'pigeon_id', 'stamps', 'address', 'banned', 'created_at'];
+    const rows = (data || []).map((p) => [
+      p.username,
+      p.display_name,
+      p.pigeon_id,
+      String(p.stamp_balance),
+      p.address,
+      String(p.is_banned),
+      p.created_at,
+    ]);
+    downloadCsv('users.csv', [header, ...rows]);
+    flash('Users CSV downloaded');
+  };
+
+  const exportLedgerCsv = async () => {
+    const { data } = await supabase
+      .from('stamp_transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    const header = ['id', 'user_id', 'amount', 'type', 'description', 'created_at'];
+    const rows = ((data as StampTransaction[]) || []).map((t) => [
+      t.id,
+      t.user_id,
+      String(t.amount),
+      t.transaction_type,
+      t.description || '',
+      t.created_at,
+    ]);
+    downloadCsv('stamp_ledger.csv', [header, ...rows]);
+    flash('Ledger CSV downloaded');
   };
 
   const saveSetting = async (key: string) => {
@@ -607,7 +848,17 @@ export default function AdminPage() {
 
         {tab === 'dashboard' && (
           <>
-            <h1 style={{ fontSize: 22, marginBottom: 16 }}>Dashboard</h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Dashboard</h1>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" style={btn} onClick={() => void exportUsersCsv()}>
+                  Export users
+                </button>
+                <button type="button" style={btn} onClick={() => void exportLedgerCsv()}>
+                  Export ledger
+                </button>
+              </div>
+            </div>
             <div
               style={{
                 display: 'grid',
@@ -639,11 +890,28 @@ export default function AdminPage() {
 
         {tab === 'live' && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 12,
+                flexWrap: 'wrap',
+                gap: 8,
+              }}
+            >
               <h1 style={{ fontSize: 22, margin: 0 }}>Live ops</h1>
-              <button type="button" style={btn} onClick={() => void loadLive()}>
-                Refresh
-              </button>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={btn} onClick={() => void loadLive()}>
+                  Refresh
+                </button>
+                <button type="button" style={btnPrimary} onClick={() => void bulkForceOverdue()}>
+                  Force all overdue
+                </button>
+                <button type="button" style={btnDanger} onClick={() => void bulkCancelOverdue()}>
+                  Cancel all overdue
+                </button>
+              </div>
             </div>
             {live.length === 0 && <p style={{ color: '#a0a8b8' }}>No active flights.</p>}
             {live.map((d) => (
@@ -783,6 +1051,7 @@ export default function AdminPage() {
           <>
             <h1 style={{ fontSize: 22, marginBottom: 12 }}>Redeem codes</h1>
             <form onSubmit={(e) => void createCode(e)} style={card}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Single code</div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#a0a8b8' }}>Code</label>
                 <input
@@ -815,6 +1084,55 @@ export default function AdminPage() {
                 Create
               </button>
             </form>
+
+            <form onSubmit={(e) => void bulkCreateCodes(e)} style={card}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Bulk generate</div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Prefix</label>
+                <input
+                  style={inputStyle}
+                  value={bulk.prefix}
+                  onChange={(e) => setBulk({ ...bulk, prefix: e.target.value.toUpperCase() })}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Count</label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={bulk.count}
+                    onChange={(e) => setBulk({ ...bulk, count: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Stamps</label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    value={bulk.amount}
+                    onChange={(e) => setBulk({ ...bulk, amount: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Max uses</label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    value={bulk.maxUses}
+                    onChange={(e) => setBulk({ ...bulk, maxUses: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+              <button type="submit" style={btnPrimary}>
+                Generate batch
+              </button>
+            </form>
+
             {codes.map((c) => (
               <div key={c.id} style={card}>
                 <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
@@ -823,11 +1141,154 @@ export default function AdminPage() {
                   {c.max_uses != null ? `/${c.max_uses}` : ''}
                   {!c.is_active ? ' · OFF' : ''}
                 </div>
-                <button type="button" style={{ ...btn, marginTop: 8 }} onClick={() => void toggleCode(c)}>
-                  {c.is_active ? 'Disable' : 'Enable'}
-                </button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                  <button type="button" style={btn} onClick={() => void toggleCode(c)}>
+                    {c.is_active ? 'Disable' : 'Enable'}
+                  </button>
+                  <button type="button" style={btnPrimary} onClick={() => void loadCodeAnalytics(c.id)}>
+                    Analytics
+                  </button>
+                </div>
+                {selectedCodeId === c.id && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: '#a0a8b8' }}>
+                    {codeAnalytics.length === 0 && <p>No redemptions yet.</p>}
+                    {codeAnalytics.map((r) => (
+                      <div key={r.id} style={{ padding: '4px 0', borderTop: '1px solid #2a2f3a' }}>
+                        @{r.username || r.user_id.slice(0, 8)} · +{r.stamp_amount} ·{' '}
+                        {new Date(r.created_at).toLocaleString()}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
+          </>
+        )}
+
+        {tab === 'moderation' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Moderation</h1>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  style={{ ...btn, background: reportFilter === 'open' ? '#3b82f6' : '#2a3242' }}
+                  onClick={() => setReportFilter('open')}
+                >
+                  Open
+                </button>
+                <button
+                  type="button"
+                  style={{ ...btn, background: reportFilter === 'all' ? '#3b82f6' : '#2a3242' }}
+                  onClick={() => setReportFilter('all')}
+                >
+                  All
+                </button>
+                <button type="button" style={btn} onClick={() => void loadReports()}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+            {reports.length === 0 && <p style={{ color: '#a0a8b8' }}>No reports.</p>}
+            {reports.map((r) => (
+              <div key={r.id} style={card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <strong style={{ textTransform: 'capitalize' }}>{r.reason.replace(/_/g, ' ')}</strong>
+                  <span style={{ fontSize: 12, color: '#a0a8b8' }}>{r.status}</span>
+                </div>
+                <div style={{ fontSize: 13, color: '#a0a8b8', marginTop: 4 }}>
+                  @{r.reporter || '?'} → @{r.reported || '?'}
+                </div>
+                {r.details && (
+                  <p style={{ fontSize: 13, marginTop: 6, color: '#c8cdd8' }}>{r.details}</p>
+                )}
+                {r.admin_note && (
+                  <p style={{ fontSize: 12, marginTop: 4, color: '#86efac' }}>Note: {r.admin_note}</p>
+                )}
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                  {new Date(r.created_at).toLocaleString()}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                  {r.status === 'open' && (
+                    <button type="button" style={btn} onClick={() => void resolveReport(r.id, 'reviewing')}>
+                      Reviewing
+                    </button>
+                  )}
+                  {r.status !== 'resolved' && (
+                    <button type="button" style={btnPrimary} onClick={() => void resolveReport(r.id, 'resolved')}>
+                      Resolve
+                    </button>
+                  )}
+                  {r.status !== 'dismissed' && (
+                    <button type="button" style={btn} onClick={() => void resolveReport(r.id, 'dismissed')}>
+                      Dismiss
+                    </button>
+                  )}
+                  {r.reported_user_id && (
+                    <button
+                      type="button"
+                      style={btnDanger}
+                      onClick={() => void ban(r.reported_user_id!, true)}
+                    >
+                      Ban reported
+                    </button>
+                  )}
+                  {r.reported_user_id && (
+                    <button
+                      type="button"
+                      style={btn}
+                      onClick={() => {
+                        setBroadcast({
+                          title: 'Message from admin',
+                          message: '',
+                          userId: r.reported_user_id!,
+                        });
+                        setTab('broadcast');
+                      }}
+                    >
+                      Message user
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'growth' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>Growth</h1>
+              <button type="button" style={btn} onClick={() => void loadGrowth()}>
+                Refresh
+              </button>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <Stat label="Signups (7d)" value={growth.signups7d} />
+              <Stat label="Messages (7d)" value={growth.messages7d} />
+              <Stat label="Delivered (7d)" value={growth.delivers7d} />
+              <Stat label="Tutorial done" value={growth.tutorialDone} />
+              <Stat label="Banned" value={growth.banned} alert={growth.banned > 0} />
+            </div>
+            <div style={{ ...card, marginTop: 12 }}>
+              <p style={{ fontSize: 13, color: '#a0a8b8', margin: 0 }}>
+                Export full lists from Dashboard. Tutorial % ≈ tutorial done / total users on Dashboard.
+              </p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <button type="button" style={btn} onClick={() => void exportUsersCsv()}>
+                  CSV users
+                </button>
+                <button type="button" style={btn} onClick={() => void exportLedgerCsv()}>
+                  CSV ledger
+                </button>
+              </div>
+            </div>
           </>
         )}
 

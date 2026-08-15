@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import type { Message, Delivery, Profile } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import PageHeader from '../components/PageHeader';
+import ReportModal from '../components/ReportModal';
 
 interface InboxItem {
   message: Message;
@@ -33,6 +34,11 @@ export default function InboxPage() {
   const { user } = useAuth();
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reportTarget, setReportTarget] = useState<{
+    id: string;
+    username: string;
+    messageId?: string;
+  } | null>(null);
 
   const load = async () => {
     if (!user) return;
@@ -169,73 +175,109 @@ export default function InboxPage() {
             RECEIVER_VISIBLE_STATUSES.has(delivery.status);
 
           return (
-            <Link
+            <div
               key={message.id}
-              to={delivery ? `/delivery/${delivery.id}` : '#'}
               className="card"
               style={{
-                display: 'block',
                 borderLeft: isNew ? '4px solid var(--accent)' : '4px solid transparent',
                 background: isNew ? '#f0f7ff' : undefined,
                 fontWeight: isNew ? 600 : undefined,
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                  <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {other?.display_name || 'Unknown'}
-                  </strong>
-                  {isNew && (
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 10,
-                        fontWeight: 800,
-                        letterSpacing: 0.4,
-                        color: '#fff',
-                        background: 'var(--accent)',
-                        padding: '2px 6px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      NEW
-                    </span>
+              <Link
+                to={delivery ? `/delivery/${delivery.id}` : '#'}
+                style={{ display: 'block', color: 'inherit', textDecoration: 'none' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {other?.display_name || 'Unknown'}
+                    </strong>
+                    {isNew && (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          letterSpacing: 0.4,
+                          color: '#fff',
+                          background: 'var(--accent)',
+                          padding: '2px 6px',
+                          borderRadius: 6,
+                        }}
+                      >
+                        NEW
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                    {formatDistanceToNow(new Date(message.created_at), { addSuffix: true })}
+                  </span>
+                </div>
+
+                <p
+                  style={{
+                    fontSize: 14,
+                    color: isNew ? 'var(--text)' : 'var(--text-secondary)',
+                    marginBottom: 6,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {isSender ? 'You: ' : ''}
+                  {message.content}
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    {statusLabel(delivery, isSender)}
+                  </span>
+                  {isUnread && isNew && (
+                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>Unread</span>
+                  )}
+                  {isReceiver && message.read_at && (
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
                   )}
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 }}>
-                  {formatDistanceToNow(new Date(message.created_at), { addSuffix: true })}
-                </span>
-              </div>
-
-              <p
-                style={{
-                  fontSize: 14,
-                  color: isNew ? 'var(--text)' : 'var(--text-secondary)',
-                  marginBottom: 6,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {isSender ? 'You: ' : ''}
-                {message.content}
-              </p>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  {statusLabel(delivery, isSender)}
-                </span>
-                {isUnread && isNew && (
-                  <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>Unread</span>
-                )}
-                {isReceiver && message.read_at && (
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
-                )}
-              </div>
-            </Link>
+              </Link>
+              {other && other.id !== user?.id && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setReportTarget({
+                      id: other.id,
+                      username: other.username,
+                      messageId: message.id,
+                    });
+                  }}
+                  style={{
+                    marginTop: 8,
+                    fontSize: 12,
+                    padding: '4px 10px',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    background: '#f2f2f7',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Report
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
+
+      {reportTarget && (
+        <ReportModal
+          reportedUserId={reportTarget.id}
+          reportedUsername={reportTarget.username}
+          messageId={reportTarget.messageId}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
     </div>
   );
 }

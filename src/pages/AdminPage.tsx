@@ -10,12 +10,37 @@ type Tab =
   | 'users'
   | 'ledger'
   | 'deliveries'
+  | 'messages'
   | 'moderation'
   | 'codes'
+  | 'events'
   | 'growth'
+  | 'health'
   | 'broadcast'
   | 'audit'
   | 'settings';
+
+interface AppEvent {
+  id: string;
+  name: string;
+  description: string | null;
+  event_type: string;
+  config: Record<string, unknown>;
+  starts_at: string;
+  ends_at: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface MsgSearchRow {
+  id: string;
+  content: string;
+  sender_id: string;
+  receiver_id: string;
+  created_at: string;
+  sender?: string;
+  receiver?: string;
+}
 
 interface RedeemCode {
   id: string;
@@ -74,9 +99,12 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'users', label: 'Users' },
   { id: 'ledger', label: 'Stamp ledger' },
   { id: 'deliveries', label: 'Deliveries' },
+  { id: 'messages', label: 'Messages' },
   { id: 'moderation', label: 'Moderation' },
   { id: 'codes', label: 'Codes' },
+  { id: 'events', label: 'Events' },
   { id: 'growth', label: 'Growth' },
+  { id: 'health', label: 'Health' },
   { id: 'broadcast', label: 'Broadcast' },
   { id: 'audit', label: 'Audit log' },
   { id: 'settings', label: 'Settings' },
@@ -129,6 +157,28 @@ export default function AdminPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [broadcast, setBroadcast] = useState({ title: '', message: '', userId: '' });
+  const [events, setEvents] = useState<AppEvent[]>([]);
+  const [newEvent, setNewEvent] = useState({
+    name: '',
+    description: '',
+    event_type: 'banner',
+    multiplier: '2',
+    starts: '',
+    ends: '',
+  });
+  const [msgQuery, setMsgQuery] = useState('');
+  const [msgResults, setMsgResults] = useState<MsgSearchRow[]>([]);
+  const [msgExpanded, setMsgExpanded] = useState<string | null>(null);
+  const [health, setHealth] = useState({
+    maintenance: false,
+    sendingPaused: false,
+    timeMultiplier: '1',
+    openReports: 0,
+    overdue: 0,
+    flying: 0,
+    failed24h: 0,
+    delivered24h: 0,
+  });
 
   const flash = (m: string, isErr = false) => {
     setMsg(isErr ? '' : m);
@@ -387,6 +437,120 @@ export default function AdminPage() {
     });
   }, []);
 
+  const loadEvents = useCallback(async () => {
+    const { data } = await supabase
+      .from('app_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(40);
+    setEvents((data as AppEvent[]) || []);
+  }, []);
+
+  const loadHealth = useCallback(async () => {
+    const { data: settingsRows } = await supabase.from('system_settings').select('key, value');
+    const map: Record<string, string> = {};
+    (settingsRows || []).forEach((row: { key: string; value: unknown }) => {
+      map[row.key] = typeof row.value === 'string' ? row.value : JSON.stringify(row.value);
+    });
+    const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: openReports } = await supabase
+      .from('user_reports')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['open', 'reviewing']);
+    const { count: flying } = await supabase
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['DISPATCHED', 'FLYING', 'PREPARING']);
+    const { count: failed24h } = await supabase
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'FAILED')
+      .gte('created_at', since24);
+    const { count: delivered24h } = await supabase
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['DELIVERED', 'READ'])
+      .gte('created_at', since24);
+
+    const { data: active } = await supabase
+      .from('deliveries')
+      .select('*')
+      .in('status', ['DISPATCHED', 'FLYING', 'PREPARING'])
+      .limit(100);
+    const enriched = await enrichDeliveries((active as Delivery[]) || []);
+
+    const parseBool = (v?: string) => {
+      const s = (v || '').replace(/"/g, '').toLowerCase();
+      return s === 'true' || s === '1' || s === 'yes';
+    };
+
+    setHealth({
+      maintenance: parseBool(map.maintenance_mode),
+      sendingPaused: parseBool(map.sending_paused),
+      timeMultiplier: (map.time_multiplier || '1').replace(/"/g, ''),
+      openReports: openReports || 0,
+      overdue: enriched.filter((d) => d.overdue).length,
+      flying: flying || 0,
+      failed24h: failed24h || 0,
+      delivered24h: delivered24h || 0,
+    });
+  }, []);
+
+  const searchMessages = async () => {
+    const q = msgQuery.trim();
+    if (!q) {
+      flash('Enter username, PID, or text', true);
+      return;
+    }
+    // Resolve users by username/PID first
+    const { data: people } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .or(`username.ilike.%${q}%,pigeon_id.ilike.%${q}%`)
+      .limit(20);
+    const ids = (people || []).map((p) => p.id);
+
+    let query = supabase
+      .from('messages')
+      .select('id, content, sender_id, receiver_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(40);
+
+    if (ids.length > 0) {
+      query = query.or(
+        `sender_id.in.(${ids.join(',')}),receiver_id.in.(${ids.join(',')}),content.ilike.%${q}%`
+      );
+    } else {
+      query = query.ilike('content', `%${q}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      flash(error.message, true);
+      return;
+    }
+
+    const rows: MsgSearchRow[] = [];
+    for (const m of data || []) {
+      const { data: s } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', m.sender_id)
+        .maybeSingle();
+      const { data: r } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', m.receiver_id)
+        .maybeSingle();
+      rows.push({
+        ...(m as MsgSearchRow),
+        sender: s?.username,
+        receiver: r?.username,
+      });
+    }
+    setMsgResults(rows);
+  };
+
   const loadCodeAnalytics = async (codeId: string) => {
     setSelectedCodeId(codeId);
     const { data } = await supabase
@@ -414,6 +578,8 @@ export default function AdminPage() {
     if (tab === 'audit') void loadAudit();
     if (tab === 'moderation') void loadReports();
     if (tab === 'growth') void loadGrowth();
+    if (tab === 'events') void loadEvents();
+    if (tab === 'health') void loadHealth();
   }, [
     tab,
     loadStats,
@@ -426,6 +592,8 @@ export default function AdminPage() {
     loadAudit,
     loadReports,
     loadGrowth,
+    loadEvents,
+    loadHealth,
   ]);
 
   if (!profile?.is_admin) {
@@ -487,6 +655,69 @@ export default function AdminPage() {
       flash(banned ? 'User banned' : 'User unbanned');
       void loadUsers();
       if (drawerUser?.id === id) setDrawerUser((u) => (u ? { ...u, is_banned: banned } : u));
+    }
+  };
+
+  const setAdminRole = async (id: string, makeAdmin: boolean) => {
+    if (!makeAdmin && !window.confirm('Revoke admin access for this user?')) return;
+    if (makeAdmin && !window.confirm('Grant admin access? They will see the full admin panel.')) return;
+    const { error } = await supabase.rpc('admin_set_admin', {
+      p_user_id: id,
+      p_is_admin: makeAdmin,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(makeAdmin ? 'Admin granted' : 'Admin revoked');
+      void loadUsers();
+      if (drawerUser?.id === id) setDrawerUser((u) => (u ? { ...u, is_admin: makeAdmin } : u));
+    }
+  };
+
+  const createEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEvent.starts || !newEvent.ends) {
+      flash('Start and end required', true);
+      return;
+    }
+    const config: Record<string, unknown> = {};
+    if (['stamp_multiplier', 'speed_multiplier'].includes(newEvent.event_type)) {
+      config.multiplier = Number(newEvent.multiplier) || 2;
+    }
+    if (newEvent.event_type === 'banner') {
+      config.message = newEvent.description || newEvent.name;
+    }
+    const { error } = await supabase.rpc('admin_create_event', {
+      p_name: newEvent.name.trim(),
+      p_description: newEvent.description.trim() || null,
+      p_event_type: newEvent.event_type,
+      p_config: config,
+      p_starts_at: new Date(newEvent.starts).toISOString(),
+      p_ends_at: new Date(newEvent.ends).toISOString(),
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash('Event created');
+      setNewEvent({
+        name: '',
+        description: '',
+        event_type: 'banner',
+        multiplier: '2',
+        starts: '',
+        ends: '',
+      });
+      void loadEvents();
+    }
+  };
+
+  const toggleEvent = async (ev: AppEvent) => {
+    const { error } = await supabase.rpc('admin_set_event_active', {
+      p_event_id: ev.id,
+      p_active: !ev.is_active,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(ev.is_active ? 'Event disabled' : 'Event enabled');
+      void loadEvents();
     }
   };
 
@@ -1255,6 +1486,211 @@ export default function AdminPage() {
           </>
         )}
 
+        {tab === 'messages' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Message search</h1>
+            <div style={card}>
+              <p style={{ fontSize: 12, color: '#a0a8b8', marginTop: 0 }}>
+                Search by username, Pigeon ID, or message text. Bodies expand on click.
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  style={{ ...inputStyle, flex: 1, minWidth: 160 }}
+                  value={msgQuery}
+                  onChange={(e) => setMsgQuery(e.target.value)}
+                  placeholder="username / PID / text"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void searchMessages();
+                  }}
+                />
+                <button type="button" style={btnPrimary} onClick={() => void searchMessages()}>
+                  Search
+                </button>
+              </div>
+            </div>
+            {msgResults.map((m) => (
+              <div key={m.id} style={card}>
+                <div style={{ fontSize: 13, color: '#a0a8b8' }}>
+                  @{m.sender} → @{m.receiver} · {new Date(m.created_at).toLocaleString()}
+                </div>
+                <button
+                  type="button"
+                  style={{
+                    ...btn,
+                    marginTop: 8,
+                    width: '100%',
+                    textAlign: 'left',
+                    fontWeight: 400,
+                    whiteSpace: msgExpanded === m.id ? 'pre-wrap' : 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  onClick={() => setMsgExpanded(msgExpanded === m.id ? null : m.id)}
+                >
+                  {m.content}
+                </button>
+              </div>
+            ))}
+          </>
+        )}
+
+        {tab === 'events' && (
+          <>
+            <h1 style={{ fontSize: 22, marginBottom: 12 }}>Events</h1>
+            <form onSubmit={(e) => void createEvent(e)} style={card}>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Name</label>
+                <input
+                  style={inputStyle}
+                  value={newEvent.name}
+                  onChange={(e) => setNewEvent({ ...newEvent, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Type</label>
+                <select
+                  style={inputStyle}
+                  value={newEvent.event_type}
+                  onChange={(e) => setNewEvent({ ...newEvent, event_type: e.target.value })}
+                >
+                  <option value="banner">Banner</option>
+                  <option value="stamp_multiplier">Stamp multiplier</option>
+                  <option value="speed_multiplier">Speed multiplier</option>
+                  <option value="double_daily">Double daily reward</option>
+                  <option value="free_sends">Free sends (flag)</option>
+                </select>
+              </div>
+              {['stamp_multiplier', 'speed_multiplier'].includes(newEvent.event_type) && (
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Multiplier</label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    step={0.5}
+                    value={newEvent.multiplier}
+                    onChange={(e) => setNewEvent({ ...newEvent, multiplier: e.target.value })}
+                  />
+                </div>
+              )}
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Description / banner text</label>
+                <textarea
+                  style={{ ...inputStyle, minHeight: 60 }}
+                  value={newEvent.description}
+                  onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Starts</label>
+                  <input
+                    style={inputStyle}
+                    type="datetime-local"
+                    value={newEvent.starts}
+                    onChange={(e) => setNewEvent({ ...newEvent, starts: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Ends</label>
+                  <input
+                    style={inputStyle}
+                    type="datetime-local"
+                    value={newEvent.ends}
+                    onChange={(e) => setNewEvent({ ...newEvent, ends: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <button type="submit" style={btnPrimary}>
+                Create event
+              </button>
+            </form>
+            {events.map((ev) => {
+              const now = Date.now();
+              const live =
+                ev.is_active &&
+                new Date(ev.starts_at).getTime() <= now &&
+                new Date(ev.ends_at).getTime() > now;
+              return (
+                <div key={ev.id} style={{ ...card, borderColor: live ? '#1a5c34' : '#2a2f3a' }}>
+                  <strong>{ev.name}</strong>
+                  {live && (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: '#86efac', fontWeight: 700 }}>
+                      LIVE
+                    </span>
+                  )}
+                  <div style={{ fontSize: 13, color: '#a0a8b8', marginTop: 4 }}>
+                    {ev.event_type} · {ev.is_active ? 'on' : 'off'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>
+                    {new Date(ev.starts_at).toLocaleString()} → {new Date(ev.ends_at).toLocaleString()}
+                  </div>
+                  {ev.description && (
+                    <p style={{ fontSize: 13, marginTop: 6, color: '#c8cdd8' }}>{ev.description}</p>
+                  )}
+                  <button type="button" style={{ ...btn, marginTop: 8 }} onClick={() => void toggleEvent(ev)}>
+                    {ev.is_active ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {tab === 'health' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h1 style={{ fontSize: 22, margin: 0 }}>System health</h1>
+              <button type="button" style={btn} onClick={() => void loadHealth()}>
+                Refresh
+              </button>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <Stat label="Maintenance" value={health.maintenance ? 1 : 0} alert={health.maintenance} />
+              <Stat label="Sending paused" value={health.sendingPaused ? 1 : 0} alert={health.sendingPaused} />
+              <Stat label="Open reports" value={health.openReports} alert={health.openReports > 0} />
+              <Stat label="Flying" value={health.flying} />
+              <Stat label="Overdue" value={health.overdue} alert={health.overdue > 0} />
+              <Stat label="Failed 24h" value={health.failed24h} />
+              <Stat label="Delivered 24h" value={health.delivered24h} />
+            </div>
+            <div style={{ ...card, marginTop: 12 }}>
+              <div style={{ fontSize: 13 }}>
+                <strong>time_multiplier</strong>: {health.timeMultiplier}
+                {health.timeMultiplier === '1' || health.timeMultiplier === '1.0' ? (
+                  <span style={{ color: '#86efac' }}> · real time</span>
+                ) : (
+                  <span style={{ color: '#fcd34d' }}> · accelerated</span>
+                )}
+              </div>
+              <p style={{ fontSize: 12, color: '#a0a8b8', marginBottom: 0 }}>
+                Toggle maintenance / sending_paused under Settings. Overdue flights: Live ops → Force all
+                overdue.
+              </p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <button type="button" style={btn} onClick={() => setTab('settings')}>
+                  Open settings
+                </button>
+                <button type="button" style={btn} onClick={() => setTab('live')}>
+                  Live ops
+                </button>
+                <button type="button" style={btn} onClick={() => setTab('moderation')}>
+                  Moderation
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
         {tab === 'growth' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -1377,6 +1813,8 @@ export default function AdminPage() {
                 'pigeon_base_speed_mph',
                 'signup_stamp_bonus',
                 'sending_paused',
+                'maintenance_mode',
+                'maintenance_message',
                 'max_stamps_per_user',
                 'max_sends_per_hour',
               ].map((key) => (
@@ -1484,6 +1922,13 @@ export default function AdminPage() {
               </button>
               <button type="button" style={btn} onClick={() => void changeAddress(drawerUser.id, drawerUser.address)}>
                 Change address
+              </button>
+              <button
+                type="button"
+                style={btn}
+                onClick={() => void setAdminRole(drawerUser.id, !drawerUser.is_admin)}
+              >
+                {drawerUser.is_admin ? 'Revoke admin' : 'Grant admin'}
               </button>
             </div>
 

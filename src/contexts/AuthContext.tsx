@@ -32,6 +32,9 @@ interface SignUpData {
   gender: string;
   address: string;
   pigeonName?: string;
+  /** Optional GPS coordinates from signup (skips re-geocoding) */
+  latitude?: number;
+  longitude?: number;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -119,10 +122,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle();
     if (existing) return { error: 'Username already taken.' };
 
-    // Geocode address
-    const geo = await geocodeAddress(data.address);
-    if (!geo) {
-      return { error: 'Could not find that address. Please try a more specific location (city, country).' };
+    // Prefer GPS coords from signup; otherwise geocode the typed address
+    let lat = data.latitude;
+    let lon = data.longitude;
+    if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+      const geo = await geocodeAddress(data.address);
+      if (!geo) {
+        return {
+          error:
+            'Could not find that address. Try "Use my current location" or a more specific place (city, country).',
+        };
+      }
+      lat = geo.lat;
+      lon = geo.lon;
     }
 
     const email = usernameToEmail(username);
@@ -135,8 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           display_name: data.displayName.trim(),
           gender: data.gender,
           address: data.address.trim(),
-          latitude: String(geo.lat),
-          longitude: String(geo.lon),
+          latitude: String(lat),
+          longitude: String(lon),
           pigeon_name: data.pigeonName?.trim() || 'Mochi',
         },
       },

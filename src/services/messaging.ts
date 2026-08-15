@@ -8,14 +8,27 @@ import {
 import type { Message, Delivery, Profile } from '../types';
 
 export async function getOrCreateConversation(
-  userA: string,
+  _userA: string,
   userB: string
 ): Promise<string> {
-  // Find existing conversation between the two users (own memberships only under RLS)
+  // Prefer security-definer RPC (runs as definer; still requires auth.uid() and validates peer)
+  const { data: rpcId, error: rpcErr } = await supabase.rpc('get_or_create_conversation', {
+    p_other_user_id: userB,
+  });
+
+  if (!rpcErr && rpcId) {
+    return rpcId as string;
+  }
+
+  // Fallback: direct inserts (requires migration 003/004 policies + grants)
+  if (rpcErr) {
+    console.warn('get_or_create_conversation RPC failed, falling back:', rpcErr.message);
+  }
+
   const { data: existing, error: existingErr } = await supabase
     .from('conversation_members')
     .select('conversation_id')
-    .eq('user_id', userA);
+    .eq('user_id', _userA);
 
   if (existingErr) {
     throw new Error(`Conversation lookup failed: ${existingErr.message}`);
@@ -37,7 +50,6 @@ export async function getOrCreateConversation(
     if (shared) return shared.conversation_id;
   }
 
-  // Create new conversation
   const { data: conv, error } = await supabase
     .from('conversations')
     .insert({})
@@ -48,12 +60,14 @@ export async function getOrCreateConversation(
     throw new Error(
       error?.message
         ? `Failed to create conversation: ${error.message}`
-        : 'Failed to create conversation'
+        : rpcErr?.message
+          ? `Failed to create conversation: ${rpcErr.message}`
+          : 'Failed to create conversation'
     );
   }
 
   const { error: membersErr } = await supabase.from('conversation_members').insert([
-    { conversation_id: conv.id, user_id: userA },
+    { conversation_id: conv.id, user_id: _userA },
     { conversation_id: conv.id, user_id: userB },
   ]);
 

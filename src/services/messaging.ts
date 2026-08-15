@@ -131,10 +131,19 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     throw new Error('Not enough Stamps.');
   }
 
-  // Economy pause (admin setting)
+  // Economy pause / maintenance (admin settings)
   const { data: paused } = await supabase.rpc('is_sending_paused');
   if (paused === true) {
     throw new Error('Sending is temporarily paused by an administrator. Try again later.');
+  }
+  const { data: maint } = await supabase.rpc('is_maintenance_mode');
+  if (maint === true) {
+    const { data: maintMsg } = await supabase.rpc('get_maintenance_message');
+    throw new Error(
+      typeof maintMsg === 'string' && maintMsg
+        ? maintMsg
+        : 'Maintenance in progress. Sending is unavailable.'
+    );
   }
 
   const weather = await getWeatherForRoute(

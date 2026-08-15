@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { completeDelivery } from '../services/messaging';
+import { completeDelivery, markMessageRead } from '../services/messaging';
 import { formatDuration } from '../lib/geo';
 import type { Delivery, Message, Profile } from '../types';
 
@@ -39,7 +39,7 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
 
 export default function DeliveryPage() {
   const { deliveryId } = useParams();
-  const { refreshProfile } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [receiver, setReceiver] = useState<Profile | null>(null);
@@ -63,6 +63,24 @@ export default function DeliveryPage() {
       }
     })();
   }, [deliveryId]);
+
+  // Receiver: mark as read once the message is delivered and they open this screen
+  useEffect(() => {
+    if (!user || !message || !delivery) return;
+    const isReceiver = message.receiver_id === user.id;
+    const canRead =
+      delivery.status === 'DELIVERED' || delivery.status === 'READ';
+    if (isReceiver && canRead && !message.read_at) {
+      markMessageRead(message.id).then(() => {
+        setMessage((prev) =>
+          prev ? { ...prev, read_at: new Date().toISOString() } : prev
+        );
+        setDelivery((prev) =>
+          prev && prev.status === 'DELIVERED' ? { ...prev, status: 'READ' } : prev
+        );
+      });
+    }
+  }, [user, message?.id, message?.read_at, delivery?.status]);
 
   // Simulate flight progress
   useEffect(() => {
@@ -179,12 +197,42 @@ export default function DeliveryPage() {
         </p>
       </div>
 
-      {isDone && delivery.status !== 'FAILED' && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <p style={{ fontWeight: 600, marginBottom: 4 }}>Message</p>
-          <p>{message.content}</p>
-        </div>
-      )}
+      {/* Sender always sees their own text; receiver only after delivery */}
+      {(() => {
+        const isSender = user?.id === message.sender_id;
+        const isReceiver = user?.id === message.receiver_id;
+        const deliveredOk =
+          delivery.status === 'DELIVERED' || delivery.status === 'READ';
+        const showContent =
+          (isSender && delivery.status !== 'FAILED') ||
+          (isReceiver && deliveredOk);
+
+        if (isReceiver && !deliveredOk && delivery.status !== 'FAILED') {
+          return (
+            <div className="card" style={{ marginTop: 12, textAlign: 'center', color: 'var(--text-secondary)' }}>
+              <p>🐦 The pigeon is still on the way…</p>
+              <p style={{ fontSize: 13, marginTop: 6 }}>The message will appear when it arrives.</p>
+            </div>
+          );
+        }
+
+        if (!showContent) return null;
+
+        return (
+          <div className="card" style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <p style={{ fontWeight: 600 }}>Message</p>
+              {isReceiver && message.read_at && (
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
+              )}
+              {isReceiver && !message.read_at && deliveredOk && (
+                <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>NEW</span>
+              )}
+            </div>
+            <p>{message.content}</p>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Message, Delivery, Profile } from '../types';
 import { formatDistanceToNow } from 'date-fns';
+import PageHeader from '../components/PageHeader';
 
 interface InboxItem {
   message: Message;
@@ -124,25 +125,27 @@ export default function InboxPage() {
 
   return (
     <div className="page">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>📬 Inbox</h1>
-        {unreadCount > 0 && (
-          <span
-            style={{
-              background: 'var(--accent)',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 700,
-              padding: '2px 8px',
-              borderRadius: 999,
-              minWidth: 22,
-              textAlign: 'center',
-            }}
-          >
-            {unreadCount}
-          </span>
-        )}
-      </div>
+      <PageHeader
+        title="📬 Inbox"
+        right={
+          unreadCount > 0 ? (
+            <span
+              style={{
+                background: 'var(--accent)',
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 700,
+                padding: '2px 8px',
+                borderRadius: 999,
+                minWidth: 22,
+                textAlign: 'center',
+              }}
+            >
+              {unreadCount}
+            </span>
+          ) : null
+        }
+      />
 
       {loading && <p style={{ color: 'var(--text-secondary)' }}>Loading…</p>}
 

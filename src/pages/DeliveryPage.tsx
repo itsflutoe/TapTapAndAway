@@ -43,6 +43,7 @@ export default function DeliveryPage() {
   const [receiver, setReceiver] = useState<Profile | null>(null);
   const [progress, setProgress] = useState(0);
   const [pigeonPos, setPigeonPos] = useState<[number, number] | null>(null);
+  const [letterExpanded, setLetterExpanded] = useState(false);
   const completedRef = useRef(false);
 
   useEffect(() => {
@@ -66,13 +67,12 @@ export default function DeliveryPage() {
     })();
   }, [deliveryId]);
 
-  // Receiver marks read when opening a delivered letter
   useEffect(() => {
     if (!user || !message || !delivery) return;
     const isReceiver = message.receiver_id === user.id;
     const canRead = delivery.status === 'DELIVERED' || delivery.status === 'READ';
     if (isReceiver && canRead && !message.read_at) {
-      markMessageRead(message.id).then(() => {
+      void markMessageRead(message.id).then(() => {
         setMessage((prev) => (prev ? { ...prev, read_at: new Date().toISOString() } : prev));
         setDelivery((prev) =>
           prev && prev.status === 'DELIVERED' ? { ...prev, status: 'READ' } : prev
@@ -81,7 +81,6 @@ export default function DeliveryPage() {
     }
   }, [user, message?.id, message?.read_at, delivery?.status]);
 
-  // Simulate flight progress
   useEffect(() => {
     if (!delivery || !delivery.actual_departure) return;
     if (['DELIVERED', 'READ', 'FAILED', 'ARRIVED'].includes(delivery.status)) {
@@ -109,7 +108,7 @@ export default function DeliveryPage() {
 
       if (pct >= 100 && !completedRef.current) {
         completedRef.current = true;
-        completeDelivery(delivery.id, delivery.message_id, message?.receiver_id || '').then(
+        void completeDelivery(delivery.id, delivery.message_id, message?.receiver_id || '').then(
           async (res) => {
             setDelivery((prev) =>
               prev ? { ...prev, status: res.status, progress_percent: 100 } : prev
@@ -123,7 +122,7 @@ export default function DeliveryPage() {
     tick();
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
-  }, [delivery, message]);
+  }, [delivery, message, refreshProfile]);
 
   if (!delivery || !message) {
     return (
@@ -140,7 +139,6 @@ export default function DeliveryPage() {
   const isSender = user?.id === message.sender_id;
   const isReceiver = user?.id === message.receiver_id;
   const deliveredOk = delivery.status === 'DELIVERED' || delivery.status === 'READ';
-
   const stepDeparture = progress > 0 || isDone;
   const stepArrival = progress >= 100 || isDone;
   const stepDelivered = isDone && !isFailed;
@@ -162,7 +160,6 @@ export default function DeliveryPage() {
         zIndex: 200,
       }}
     >
-      {/* Full-screen map */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <MapContainer
           center={origin}
@@ -182,7 +179,6 @@ export default function DeliveryPage() {
           <FitBounds positions={[origin, dest]} />
         </MapContainer>
 
-        {/* Top overlay */}
         <div
           style={{
             position: 'absolute',
@@ -253,18 +249,18 @@ export default function DeliveryPage() {
         </div>
       </div>
 
-      {/* Bottom sheet */}
       <div
         style={{
           background: '#fff',
           borderTopLeftRadius: 20,
           borderTopRightRadius: 20,
-          padding: '18px 18px calc(18px + env(safe-area-inset-bottom, 0px))',
+          padding: '16px 16px calc(16px + env(safe-area-inset-bottom, 0px))',
           boxShadow: '0 -8px 28px rgba(0,0,0,0.12)',
           zIndex: 500,
+          maxHeight: letterExpanded ? '55vh' : 'auto',
         }}
       >
-        <div style={{ position: 'relative', padding: '0 8px 8px' }}>
+        <div style={{ position: 'relative', padding: '0 4px 4px' }}>
           <div
             style={{
               position: 'absolute',
@@ -303,8 +299,8 @@ export default function DeliveryPage() {
         <p
           style={{
             textAlign: 'center',
-            marginTop: 4,
-            marginBottom: 12,
+            marginTop: 6,
+            marginBottom: 10,
             fontSize: 14,
             fontWeight: 600,
             color: isFailed ? 'var(--danger)' : isDone ? 'var(--success)' : 'var(--text)',
@@ -317,40 +313,69 @@ export default function DeliveryPage() {
           <div
             style={{
               textAlign: 'center',
-              padding: 14,
+              padding: 12,
               background: '#f5f5f7',
               borderRadius: 14,
               color: 'var(--text-secondary)',
             }}
           >
-            <div style={{ fontSize: 28, marginBottom: 6 }}>🐦</div>
-            <p style={{ fontWeight: 600, color: 'var(--text)' }}>Pigeon is on the way</p>
-            <p style={{ fontSize: 13, marginTop: 4 }}>The letter opens when it arrives.</p>
+            <div style={{ fontSize: 24, marginBottom: 4 }}>🐦</div>
+            <p style={{ fontWeight: 600, color: 'var(--text)', fontSize: 14 }}>Pigeon is on the way</p>
+            <p style={{ fontSize: 12, marginTop: 2 }}>The letter opens when it arrives.</p>
           </div>
         )}
 
         {((isSender && !isFailed) || (isReceiver && deliveredOk)) && (
-          <div style={{ padding: '14px 16px', background: '#f5f5f7', borderRadius: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+          <button
+            type="button"
+            onClick={() => setLetterExpanded((v) => !v)}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              padding: '12px 14px',
+              background: '#f5f5f7',
+              borderRadius: 14,
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: letterExpanded ? 8 : 0,
+              }}
+            >
               <span
                 style={{
                   fontSize: 12,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   color: 'var(--text-secondary)',
-                  letterSpacing: 0.3,
+                  letterSpacing: 0.4,
                 }}
               >
-                LETTER
+                LETTER {letterExpanded ? '▾' : '▸'}
               </span>
-              {isReceiver && message.read_at && (
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
-              )}
-              {isReceiver && !message.read_at && deliveredOk && (
-                <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 700 }}>NEW</span>
-              )}
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                {letterExpanded ? 'Tap to collapse' : 'Tap to expand'}
+              </span>
             </div>
-            <p style={{ fontSize: 16, lineHeight: 1.45, margin: 0 }}>{message.content}</p>
-          </div>
+            <p
+              style={{
+                fontSize: 15,
+                lineHeight: 1.45,
+                margin: 0,
+                overflow: letterExpanded ? 'auto' : 'hidden',
+                display: letterExpanded ? 'block' : '-webkit-box',
+                WebkitLineClamp: letterExpanded ? undefined : 2,
+                WebkitBoxOrient: letterExpanded ? undefined : ('vertical' as const),
+                maxHeight: letterExpanded ? '35vh' : undefined,
+              }}
+            >
+              {message.content}
+            </p>
+          </button>
         )}
 
         {isFailed && isSender && (
@@ -362,6 +387,7 @@ export default function DeliveryPage() {
               borderRadius: 14,
               color: 'var(--danger)',
               fontSize: 14,
+              marginTop: 10,
             }}
           >
             Delivery failed. Your Stamps were refunded.
@@ -387,7 +413,7 @@ function ProgressNode({
 }) {
   let bg = '#e8e8ed';
   let color = '#8e8e93';
-  let content: string = '';
+  let content = '';
 
   if (failed) {
     bg = '#ff3b30';
@@ -418,7 +444,6 @@ function ProgressNode({
           fontSize: flying ? 14 : 13,
           fontWeight: 700,
           boxShadow: active || flying ? '0 0 0 4px rgba(0,113,227,0.2)' : undefined,
-          transition: 'background 0.2s',
         }}
       >
         {content}

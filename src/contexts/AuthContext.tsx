@@ -108,6 +108,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Presence heartbeat every 2 minutes while logged in
+  useEffect(() => {
+    if (!user) return;
+    const touch = () => {
+      void supabase.rpc('touch_last_seen');
+    };
+    touch();
+    const id = window.setInterval(touch, 2 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [user?.id]);
+
   const signUp = async (data: SignUpData): Promise<{ error: string | null }> => {
     const username = data.username.trim().toLowerCase();
     if (!/^[a-z0-9_]{3,20}$/.test(username)) {

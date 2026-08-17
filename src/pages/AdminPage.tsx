@@ -3,6 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { geocodeAddress } from '../lib/geo';
 import type { Profile, Delivery, StampTransaction } from '../types';
+import { BASIC_SPRITE_IDS } from '../lib/pigeonAppearance';
+import PigeonAvatar from '../components/PigeonAvatar';
 
 type Tab =
   | 'dashboard'
@@ -137,6 +139,7 @@ export default function AdminPage() {
   const [drawerPigeonGender, setDrawerPigeonGender] = useState<string | null>(null);
   const [stampInput, setStampInput] = useState('10');
   const [stampMode, setStampMode] = useState<'add' | 'set'>('add');
+  const [spriteInput, setSpriteInput] = useState('');
 
   const [ledger, setLedger] = useState<(StampTransaction & { username?: string })[]>([]);
   const [ledgerUser, setLedgerUser] = useState('');
@@ -293,7 +296,9 @@ export default function AdminPage() {
         .limit(1)
         .maybeSingle();
       if (pig) {
-        setDrawerSprite((pig as { sprite_id?: string | null }).sprite_id ?? null);
+        const sid = (pig as { sprite_id?: string | null }).sprite_id ?? null;
+        setDrawerSprite(sid);
+        setSpriteInput(sid || 'basic-01');
         setDrawerPigeonName((pig as { name?: string }).name ?? null);
         setDrawerPigeonGender((pig as { gender?: string }).gender ?? null);
       }
@@ -623,7 +628,28 @@ export default function AdminPage() {
     );
   }
 
-  const applyStamps = async (userId: string) => {
+  const setPigeonSprite = async (userId: string) => {
+    const sid = spriteInput.trim().toLowerCase();
+    if (!sid) {
+      flash('Enter a sprite id', true);
+      return;
+    }
+    const { error } = await supabase.rpc('admin_set_pigeon_sprite', {
+      p_user_id: userId,
+      p_sprite_id: sid,
+    });
+    if (error) flash(error.message, true);
+    else {
+      flash(`Sprite set to ${sid}`);
+      setDrawerSprite(sid);
+      if (drawerUser?.id === userId) {
+        const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+        if (data) void openDrawer(data as Profile);
+      }
+    }
+  };
+
+    const applyStamps = async (userId: string) => {
     const n = Number(stampInput);
     if (!Number.isFinite(n) || n === 0) {
       flash('Enter a non-zero number', true);
@@ -1893,9 +1919,48 @@ export default function AdminPage() {
             <p style={{ fontSize: 13, color: '#a0a8b8' }}>
               Pigeon: {drawerPigeonName || '—'}
               {drawerPigeonGender ? ` · ${drawerPigeonGender}` : ''}
-              {drawerSprite ? ` · sprite ${drawerSprite}` : ''}
+              {drawerSprite ? ` · ${drawerSprite}` : ''}
             </p>
             <p style={{ fontSize: 13, color: '#a0a8b8' }}>{drawerUser.address}</p>
+
+            <div style={{ ...card, marginTop: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Pigeon sprite</div>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                <PigeonAvatar spriteId={spriteInput || drawerSprite} size={72} />
+              </div>
+              <label style={{ fontSize: 12, color: '#a0a8b8' }}>Dropdown (basic starters)</label>
+              <select
+                style={{ ...inputStyle, marginTop: 4, marginBottom: 8 }}
+                value={(BASIC_SPRITE_IDS as readonly string[]).includes(spriteInput) ? spriteInput : ''}
+                onChange={(e) => {
+                  if (e.target.value) setSpriteInput(e.target.value);
+                }}
+              >
+                <option value="">— pick basic —</option>
+                {BASIC_SPRITE_IDS.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+              <label style={{ fontSize: 12, color: '#a0a8b8' }}>Or type sprite id (e.g. basic-10)</label>
+              <input
+                style={{ ...inputStyle, marginTop: 4 }}
+                value={spriteInput}
+                onChange={(e) => setSpriteInput(e.target.value.trim())}
+                placeholder="basic-07"
+              />
+              <button
+                type="button"
+                style={{ ...btnPrimary, width: '100%', marginTop: 8 }}
+                onClick={() => void setPigeonSprite(drawerUser.id)}
+              >
+                Set sprite
+              </button>
+              <p style={{ fontSize: 11, color: '#6b7280', marginTop: 8, marginBottom: 0 }}>
+                Signup still randomizes basic-01…09. Use this only for customs / friends.
+              </p>
+            </div>
             <p style={{ marginTop: 8 }}>
               🪙 <strong>{drawerUser.stamp_balance}</strong>
               {drawerUser.is_banned ? ' · BANNED' : ''}

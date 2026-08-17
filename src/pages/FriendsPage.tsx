@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Profile, Friendship } from '../types';
 import PageHeader from '../components/PageHeader';
 import ReportModal from '../components/ReportModal';
+import { formatPresence } from '../lib/presence';
 
 export default function FriendsPage() {
   const { user } = useAuth();
@@ -114,25 +116,51 @@ export default function FriendsPage() {
 
       <h2 style={{ fontSize: 16, margin: '16px 0 8px' }}>Your friends ({friends.length})</h2>
       {friends.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No friends yet. Search above to add someone.</p>}
-      {friends.map((f) => (
-        <div key={f.id} className="card" style={{ marginBottom: 8 }}>
-          <strong>{f.other.display_name}</strong>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            @{f.other.username} · {f.other.pigeon_id}
+      {friends.map((f) => {
+        const presence = formatPresence(f.other.last_seen_at);
+        return (
+          <div key={f.id} className="card" style={{ marginBottom: 8 }}>
+            <Link
+              to={`/friend/${f.other.id}`}
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
+            >
+              <strong style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span
+                  title={presence.label}
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: presence.online ? '#34c759' : '#c7c7cc',
+                    flexShrink: 0,
+                  }}
+                />
+                {f.other.display_name}
+              </strong>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
+                @{f.other.username}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  marginTop: 4,
+                  color: presence.online ? '#34c759' : 'var(--text-secondary)',
+                }}
+              >
+                {presence.label}
+              </div>
+            </Link>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ padding: '6px 10px', marginTop: 8, fontSize: 12 }}
+              onClick={() => setReportTarget({ id: f.other.id, username: f.other.username })}
+            >
+              Report
+            </button>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {f.other.address}
-          </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ padding: '6px 10px', marginTop: 8, fontSize: 12 }}
-            onClick={() => setReportTarget({ id: f.other.id, username: f.other.username })}
-          >
-            Report
-          </button>
-        </div>
-      ))}
+        );
+      })}
 
       {reportTarget && (
         <ReportModal

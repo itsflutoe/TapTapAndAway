@@ -11,6 +11,7 @@ import ProfilePage from './pages/ProfilePage';
 import StorePage from './pages/StorePage';
 import AdminPage from './pages/AdminPage';
 import DeliveryPage from './pages/DeliveryPage';
+import FriendProfilePage from './pages/FriendProfilePage';
 import BottomNav from './components/BottomNav';
 import LoadingScreen from './components/LoadingScreen';
 import MaintenanceBanner from './components/MaintenanceBanner';
@@ -144,6 +145,17 @@ function AppRoutes() {
           <ProtectedRoute>
             <div className="app-shell">
               <FriendsPage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/friend/:userId"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <FriendProfilePage />
               <BottomNav />
             </div>
           </ProtectedRoute>

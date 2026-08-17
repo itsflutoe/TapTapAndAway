@@ -142,7 +142,6 @@ export default function AdminPage() {
   const [deliveries, setDeliveries] = useState<LiveDelivery[]>([]);
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [newCode, setNewCode] = useState({ code: '', amount: 10, maxUses: '', expires: '' });
-  const [bulk, setBulk] = useState({ prefix: 'EVENT', count: 10, amount: 5, maxUses: 1 });
   const [codeAnalytics, setCodeAnalytics] = useState<RedemptionRow[]>([]);
   const [selectedCodeId, setSelectedCodeId] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportRow[]>([]);
@@ -787,18 +786,38 @@ export default function AdminPage() {
     }
   };
 
-  const bulkCreateCodes = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const { data, error } = await supabase.rpc('admin_bulk_create_codes', {
-      p_prefix: bulk.prefix.trim(),
-      p_count: Math.round(bulk.count),
-      p_stamp_amount: Math.round(bulk.amount),
-      p_max_uses: Math.round(bulk.maxUses),
-      p_expires_at: null,
-    });
-    if (error) flash(error.message, true);
-    else {
-      flash(`Created ${(data as string[])?.length || 0} codes`);
+  const deleteAllCodes = async () => {
+    if (
+      !window.confirm(
+        'Hard delete ALL redeem codes and their redemption history?\n\nThis cannot be undone.'
+      )
+    ) {
+      return;
+    }
+
+    // Delete redemptions first (FK safety)
+    const { error: redErr } = await supabase
+      .from('redeem_code_redemptions')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    if (redErr) {
+      flash(redErr.message, true);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('redeem_codes')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    if (error) {
+      flash(error.message, true);
+    } else {
+      await log('delete_all_codes', 'code');
+      flash('All codes permanently deleted');
+      setSelectedCodeId(null);
+      setCodeAnalytics([]);
       void loadCodes();
     }
   };
@@ -1281,14 +1300,16 @@ export default function AdminPage() {
         {tab === 'codes' && (
           <>
             <h1 style={{ fontSize: 22, marginBottom: 12 }}>Redeem codes</h1>
+
             <form onSubmit={(e) => void createCode(e)} style={card}>
-              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Single code</div>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Create code</div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#a0a8b8' }}>Code</label>
                 <input
                   style={inputStyle}
                   value={newCode.code}
                   onChange={(e) => setNewCode({ ...newCode, code: e.target.value.toUpperCase() })}
+                  placeholder="e.g. WELCOME10"
                   required
                 />
               </div>
@@ -1303,73 +1324,47 @@ export default function AdminPage() {
                 />
               </div>
               <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Max uses (empty = ∞)</label>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>
+                  Max uses (empty = unlimited / multi-user)
+                </label>
                 <input
                   style={inputStyle}
                   type="number"
+                  min={1}
                   value={newCode.maxUses}
                   onChange={(e) => setNewCode({ ...newCode, maxUses: e.target.value })}
+                  placeholder="1 = single use, empty = ∞"
                 />
               </div>
               <button type="submit" style={btnPrimary}>
-                Create
+                Add code
               </button>
             </form>
 
-            <form onSubmit={(e) => void bulkCreateCodes(e)} style={card}>
-              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>Bulk generate</div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 12, color: '#a0a8b8' }}>Prefix</label>
-                <input
-                  style={inputStyle}
-                  value={bulk.prefix}
-                  onChange={(e) => setBulk({ ...bulk, prefix: e.target.value.toUpperCase() })}
-                />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                margin: '16px 0 8px',
+              }}
+            >
+              <div style={{ fontSize: 13, color: '#a0a8b8' }}>
+                {codes.length} code{codes.length === 1 ? '' : 's'}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-                <div>
-                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Count</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={bulk.count}
-                    onChange={(e) => setBulk({ ...bulk, count: Number(e.target.value) })}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Stamps</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    min={1}
-                    value={bulk.amount}
-                    onChange={(e) => setBulk({ ...bulk, amount: Number(e.target.value) })}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>Max uses</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    min={1}
-                    value={bulk.maxUses}
-                    onChange={(e) => setBulk({ ...bulk, maxUses: Number(e.target.value) })}
-                  />
-                </div>
-              </div>
-              <button type="submit" style={btnPrimary}>
-                Generate batch
-              </button>
-            </form>
+              {codes.length > 0 && (
+                <button type="button" style={btnDanger} onClick={() => void deleteAllCodes()}>
+                  Delete all codes
+                </button>
+              )}
+            </div>
 
             {codes.map((c) => (
               <div key={c.id} style={card}>
                 <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
                 <div style={{ fontSize: 13, color: '#a0a8b8' }}>
                   +{c.stamp_amount} · used {c.used_count}
-                  {c.max_uses != null ? `/${c.max_uses}` : ''}
+                  {c.max_uses != null ? `/${c.max_uses}` : '/∞'}
                   {!c.is_active ? ' · OFF' : ''}
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>

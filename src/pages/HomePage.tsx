@@ -4,6 +4,8 @@ import { Settings, ShoppingBag } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
+import PigeonAvatar from '../components/PigeonAvatar';
+import { spriteLabel } from '../lib/pigeonAppearance';
 
 export default function HomePage() {
   const { profile, pigeon, claimDailyReward } = useAuth();
@@ -85,9 +87,13 @@ export default function HomePage() {
           minHeight: 280,
         }}
       >
-        <div className="pigeon-idle" style={{ fontSize: 120, lineHeight: 1, marginBottom: 8 }}>
-          🐦
-        </div>
+        <PigeonAvatar
+          spriteId={pigeon?.sprite_id}
+          size={140}
+          name={pigeon?.name}
+          className="pigeon-idle"
+          style={{ marginBottom: 8 }}
+        />
         <div
           style={{
             width: 140,
@@ -102,6 +108,7 @@ export default function HomePage() {
         </p>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 4 }}>
           PID: {profile.pigeon_id}
+          {pigeon?.sprite_id ? ` · ${spriteLabel(pigeon.sprite_id)}` : ''}
         </p>
 
         <div

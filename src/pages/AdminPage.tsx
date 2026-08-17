@@ -132,6 +132,9 @@ export default function AdminPage() {
   const [drawerUser, setDrawerUser] = useState<Profile | null>(null);
   const [drawerTx, setDrawerTx] = useState<StampTransaction[]>([]);
   const [drawerDel, setDrawerDel] = useState<LiveDelivery[]>([]);
+  const [drawerSprite, setDrawerSprite] = useState<string | null>(null);
+  const [drawerPigeonName, setDrawerPigeonName] = useState<string | null>(null);
+  const [drawerPigeonGender, setDrawerPigeonGender] = useState<string | null>(null);
   const [stampInput, setStampInput] = useState('10');
   const [stampMode, setStampMode] = useState<'add' | 'set'>('add');
 
@@ -278,6 +281,23 @@ export default function AdminPage() {
     setDrawerUser(u);
     setStampInput('10');
     setStampMode('add');
+    setDrawerSprite(null);
+    setDrawerPigeonName(null);
+    setDrawerPigeonGender(null);
+    {
+      const { data: pig } = await supabase
+        .from('pigeons')
+        .select('name, gender, sprite_id')
+        .eq('owner_id', u.id)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (pig) {
+        setDrawerSprite((pig as { sprite_id?: string | null }).sprite_id ?? null);
+        setDrawerPigeonName((pig as { name?: string }).name ?? null);
+        setDrawerPigeonGender((pig as { gender?: string }).gender ?? null);
+      }
+    }
     const { data: tx } = await supabase
       .from('stamp_transactions')
       .select('*')
@@ -1869,6 +1889,11 @@ export default function AdminPage() {
             </div>
             <p style={{ fontSize: 13, color: '#a0a8b8' }}>
               @{drawerUser.username} · {drawerUser.pigeon_id}
+            </p>
+            <p style={{ fontSize: 13, color: '#a0a8b8' }}>
+              Pigeon: {drawerPigeonName || '—'}
+              {drawerPigeonGender ? ` · ${drawerPigeonGender}` : ''}
+              {drawerSprite ? ` · sprite ${drawerSprite}` : ''}
             </p>
             <p style={{ fontSize: 13, color: '#a0a8b8' }}>{drawerUser.address}</p>
             <p style={{ marginTop: 8 }}>

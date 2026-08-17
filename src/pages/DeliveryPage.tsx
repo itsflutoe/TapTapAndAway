@@ -18,12 +18,24 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-const pigeonIcon = L.divIcon({
-  className: '',
-  html: '<div style="font-size:28px;line-height:1">🐦</div>',
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
-});
+function makePigeonIcon(spriteId?: string | null) {
+  // Static PNG on map marker if sprite known; emoji fallback
+  if (spriteId && spriteId.startsWith('basic-')) {
+    const url = `/pigeons/basic/${spriteId}.png`;
+    return L.divIcon({
+      className: '',
+      html: `<img src="${url}" width="32" height="32" style="image-rendering:pixelated;object-fit:contain" alt="" />`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+  }
+  return L.divIcon({
+    className: '',
+    html: '<div style="font-size:28px;line-height:1">🐦</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
+}
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
@@ -41,6 +53,8 @@ export default function DeliveryPage() {
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [receiver, setReceiver] = useState<Profile | null>(null);
+  const [sender, setSender] = useState<Profile | null>(null);
+  const [senderSprite, setSenderSprite] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [pigeonPos, setPigeonPos] = useState<[number, number] | null>(null);
   const [letterExpanded, setLetterExpanded] = useState(false);
@@ -63,6 +77,22 @@ export default function DeliveryPage() {
           .eq('id', m.receiver_id)
           .single();
         setReceiver(r as Profile);
+        const { data: s } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', m.sender_id)
+          .single();
+        setSender(s as Profile);
+        if (s) {
+          const { data: pig } = await supabase
+            .from('pigeons')
+            .select('sprite_id')
+            .eq('owner_id', s.id)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+          setSenderSprite((pig as { sprite_id?: string } | null)?.sprite_id ?? null);
+        }
       }
     })();
   }, [deliveryId]);
@@ -175,7 +205,12 @@ export default function DeliveryPage() {
           <Marker position={origin} />
           <Marker position={dest} />
           <Polyline positions={[origin, dest]} color="#0071e3" weight={3} dashArray="6 8" />
-          {pigeonPos && <Marker position={pigeonPos} icon={pigeonIcon} />}
+          {pigeonPos && (
+            <Marker
+              position={pigeonPos}
+              icon={makePigeonIcon(senderSprite)}
+            />
+          )}
           <FitBounds positions={[origin, dest]} />
         </MapContainer>
 

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
+import PigeonAvatar from '../components/PigeonAvatar';
+import { spriteLabel } from '../lib/pigeonAppearance';
 import type { Delivery } from '../types';
 
 interface HistoryItem {
@@ -83,10 +85,15 @@ export default function ProfilePage() {
       <PageHeader title="👤 Profile" />
 
       <div className="card" style={{ textAlign: 'center', marginBottom: 16 }}>
-        <div style={{ fontSize: 64, marginBottom: 8 }}>🐦</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+          <PigeonAvatar spriteId={pigeon?.sprite_id} size={88} name={pigeon?.name} />
+        </div>
         <h2 style={{ fontSize: 20 }}>{profile.display_name}</h2>
         <p style={{ color: 'var(--text-secondary)' }}>@{profile.username}</p>
-        <p style={{ fontFamily: 'monospace', marginTop: 4 }}>{profile.pigeon_id}</p>
+        <p style={{ fontFamily: 'monospace', marginTop: 4 }}>
+          {profile.pigeon_id}
+          {pigeon?.sprite_id ? ` · ${spriteLabel(pigeon.sprite_id)}` : ''}
+        </p>
         <div className="stamp-badge" style={{ marginTop: 12 }}>
           🪙 {profile.stamp_balance} Stamps
         </div>

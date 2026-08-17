@@ -2,6 +2,7 @@ import { supabase, assertSupabaseConfigured } from '../lib/supabase';
 import {
   haversineKm,
   calculateStampCost,
+  fetchKmPerStamp,
   calculateFlightSeconds,
   applyTimeMultiplier,
   getWeatherForRoute,
@@ -156,7 +157,12 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
 
   // Active events: free_sends, stamp_multiplier, speed_multiplier
   const effects = await getEventEffects();
-  let stampCost = calculateStampCost(distanceKm);
+  const kmPerStamp = await fetchKmPerStamp(async (key) => {
+    const { data } = await supabase.from('system_settings').select('value').eq('key', key).maybeSingle();
+    if (data?.value == null) return null;
+    return typeof data.value === 'string' ? data.value : JSON.stringify(data.value);
+  });
+  let stampCost = calculateStampCost(distanceKm, kmPerStamp);
   if (effects.free_sends) {
     stampCost = 0;
   } else if (effects.stamp_multiplier > 1) {

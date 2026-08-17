@@ -4,7 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
 import PigeonAvatar from '../components/PigeonAvatar';
-import { spriteLabel } from '../lib/pigeonAppearance';
 import type { Delivery } from '../types';
 
 interface HistoryItem {
@@ -90,10 +89,7 @@ export default function ProfilePage() {
         </div>
         <h2 style={{ fontSize: 20 }}>{profile.display_name}</h2>
         <p style={{ color: 'var(--text-secondary)' }}>@{profile.username}</p>
-        <p style={{ fontFamily: 'monospace', marginTop: 4 }}>
-          {profile.pigeon_id}
-          {pigeon?.sprite_id ? ` · ${spriteLabel(pigeon.sprite_id)}` : ''}
-        </p>
+        <p style={{ fontFamily: 'monospace', marginTop: 4 }}>{profile.pigeon_id}</p>
         <div className="stamp-badge" style={{ marginTop: 12 }}>
           🪙 {profile.stamp_balance} Stamps
         </div>

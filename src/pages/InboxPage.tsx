@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,34 +6,73 @@ import type { Message, Delivery, Profile } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import PageHeader from '../components/PageHeader';
 import ReportModal from '../components/ReportModal';
+import PigeonAvatar from '../components/PigeonAvatar';
 
-interface InboxItem {
+interface RawItem {
   message: Message;
   delivery: Delivery | null;
   other: Profile | null;
+  otherSprite: string | null;
 }
 
-/** Receiver may only see a message after the pigeon has arrived. */
-const RECEIVER_VISIBLE_STATUSES = new Set(['DELIVERED', 'READ']);
+interface Thread {
+  otherId: string;
+  other: Profile | null;
+  otherSprite: string | null;
+  lastMessage: Message;
+  lastDelivery: Delivery | null;
+  unread: number;
+}
 
-/** Sender always sees their own outbox (flying / failed / delivered). */
-function isVisibleToUser(
+const RECEIVER_VISIBLE = new Set(['DELIVERED', 'READ']);
+
+function isVisibleToUser(message: Message, delivery: Delivery | null, userId: string): boolean {
+  if (message.sender_id === userId) return true;
+  if (!delivery) return false;
+  return RECEIVER_VISIBLE.has(delivery.status);
+}
+
+/** Receiver: no body until delivered. Sender may see own text. */
+function previewLine(
   message: Message,
   delivery: Delivery | null,
   userId: string
-): boolean {
+): string {
   const isSender = message.sender_id === userId;
-  if (isSender) return true;
+  const flying =
+    delivery &&
+    ['FLYING', 'DISPATCHED', 'PREPARING', 'ARRIVED'].includes(delivery.status);
 
-  // Recipient: hide until delivered (FAILED = message never arrives)
-  if (!delivery) return false;
-  return RECEIVER_VISIBLE_STATUSES.has(delivery.status);
+  if (!isSender) {
+    // Receiver: never show content until delivered
+    if (!delivery || !RECEIVER_VISIBLE.has(delivery.status)) {
+      return '';
+    }
+    return message.content;
+  }
+
+  // Sender
+  if (flying) return 'Sent · pigeon en route…';
+  if (delivery?.status === 'FAILED') return 'Failed to deliver';
+  return `You: ${message.content}`;
+}
+
+function statusTag(delivery: Delivery | null, unread: boolean): string {
+  if (!delivery) return '';
+  if (['FLYING', 'DISPATCHED', 'PREPARING'].includes(delivery.status)) return 'Flying';
+  if (delivery.status === 'ARRIVED') return 'Arrived';
+  if (delivery.status === 'FAILED') return 'Failed';
+  if (unread) return 'New';
+  if (delivery.status === 'READ') return 'Read';
+  if (delivery.status === 'DELIVERED') return 'Delivered';
+  return '';
 }
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const [items, setItems] = useState<InboxItem[]>([]);
+  const [raw, setRaw] = useState<RawItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
   const [reportTarget, setReportTarget] = useState<{
     id: string;
     username: string;
@@ -49,92 +88,119 @@ export default function InboxPage() {
       .select('*')
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(100);
 
-    if (!messages) {
-      setItems([]);
+    if (!messages?.length) {
+      setRaw([]);
       setLoading(false);
       return;
     }
 
-    const enriched: InboxItem[] = [];
+    const otherIds = [
+      ...new Set(
+        messages.map((m) => (m.sender_id === user.id ? m.receiver_id : m.sender_id))
+      ),
+    ];
+    const msgIds = messages.map((m) => m.id);
+
+    const [{ data: profiles }, { data: deliveries }, { data: pigeons }] = await Promise.all([
+      supabase.from('profiles').select('*').in('id', otherIds),
+      supabase.from('deliveries').select('*').in('message_id', msgIds),
+      supabase.from('pigeons').select('owner_id, sprite_id').in('owner_id', otherIds).eq('is_active', true),
+    ]);
+
+    const profileMap = new Map((profiles || []).map((p) => [p.id, p as Profile]));
+    const delMap = new Map((deliveries || []).map((d) => [d.message_id, d as Delivery]));
+    const spriteMap = new Map(
+      (pigeons || []).map((p) => [p.owner_id, (p as { sprite_id?: string }).sprite_id ?? null])
+    );
+
+    const enriched: RawItem[] = [];
     for (const m of messages) {
       const otherId = m.sender_id === user.id ? m.receiver_id : m.sender_id;
-      const { data: other } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', otherId)
-        .single();
-      const { data: delivery } = await supabase
-        .from('deliveries')
-        .select('*')
-        .eq('message_id', m.id)
-        .maybeSingle();
-
-      const item: InboxItem = {
-        message: m as Message,
-        delivery: (delivery as Delivery | null) ?? null,
-        other: (other as Profile | null) ?? null,
-      };
-
-      if (isVisibleToUser(item.message, item.delivery, user.id)) {
-        enriched.push(item);
-      }
+      const delivery = delMap.get(m.id) ?? null;
+      const message = m as Message;
+      if (!isVisibleToUser(message, delivery, user.id)) continue;
+      enriched.push({
+        message,
+        delivery,
+        other: profileMap.get(otherId) ?? null,
+        otherSprite: spriteMap.get(otherId) ?? null,
+      });
     }
 
-    setItems(enriched);
+    setRaw(enriched);
     setLoading(false);
   };
 
   useEffect(() => {
-    load();
+    void load();
     if (!user) return;
-
     const channel = supabase
       .channel(`inbox-${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
-        () => load()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'deliveries' },
-        () => load()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, () => void load())
       .subscribe();
-
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user?.id]);
 
-  const statusLabel = (d: Delivery | null, isSender: boolean) => {
-    if (!d) return isSender ? '…' : '';
-    if (d.status === 'FLYING' || d.status === 'DISPATCHED' || d.status === 'PREPARING') {
-      return '🐦 Flying…';
+  const threads: Thread[] = useMemo(() => {
+    if (!user) return [];
+    const map = new Map<string, Thread>();
+    for (const item of raw) {
+      const otherId =
+        item.message.sender_id === user.id ? item.message.receiver_id : item.message.sender_id;
+      const isReceiver = item.message.receiver_id === user.id;
+      const deliveredOk =
+        item.delivery && RECEIVER_VISIBLE.has(item.delivery.status);
+      const thisUnread = isReceiver && !item.message.read_at && !!deliveredOk ? 1 : 0;
+
+      const existing = map.get(otherId);
+      if (!existing) {
+        map.set(otherId, {
+          otherId,
+          other: item.other,
+          otherSprite: item.otherSprite,
+          lastMessage: item.message,
+          lastDelivery: item.delivery,
+          unread: thisUnread,
+        });
+      } else {
+        existing.unread += thisUnread;
+        // raw is newest-first; first wins as lastMessage
+      }
     }
-    if (d.status === 'ARRIVED') return '🐦 Arrived';
-    if (d.status === 'DELIVERED') return '🐦 Delivered';
-    if (d.status === 'READ') return '✓ Read';
-    if (d.status === 'FAILED') return '❌ Failed';
-    return d.status;
-  };
+    return [...map.values()].sort(
+      (a, b) =>
+        new Date(b.lastMessage.created_at).getTime() -
+        new Date(a.lastMessage.created_at).getTime()
+    );
+  }, [raw, user?.id]);
 
-  const unreadCount = items.filter(
-    (i) =>
-      i.message.receiver_id === user?.id &&
-      !i.message.read_at &&
-      i.delivery &&
-      RECEIVER_VISIBLE_STATUSES.has(i.delivery.status)
-  ).length;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return threads;
+    return threads.filter((t) => {
+      const u = t.other;
+      if (!u) return false;
+      return (
+        u.username.toLowerCase().includes(q) ||
+        u.display_name.toLowerCase().includes(q) ||
+        u.pigeon_id.toLowerCase().includes(q)
+      );
+    });
+  }, [threads, query]);
+
+  const unreadTotal = threads.reduce((s, t) => s + t.unread, 0);
 
   return (
     <div className="page">
       <PageHeader
         title="📬 Inbox"
         right={
-          unreadCount > 0 ? (
+          unreadTotal > 0 ? (
             <span
               style={{
                 background: 'var(--accent)',
@@ -147,111 +213,143 @@ export default function InboxPage() {
                 textAlign: 'center',
               }}
             >
-              {unreadCount}
+              {unreadTotal}
             </span>
           ) : null
         }
       />
 
+      <div className="card" style={{ marginBottom: 12, padding: 12 }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name, username, PID…"
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            fontSize: 14,
+            boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
       {loading && <p style={{ color: 'var(--text-secondary)' }}>Loading…</p>}
 
-      {!loading && items.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-          <p style={{ color: 'var(--text-secondary)' }}>No messages yet. Send a pigeon!</p>
-          <Link to="/send" className="btn btn-primary" style={{ marginTop: 16 }}>
-            Send
-          </Link>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            {query.trim() ? 'No matches.' : 'No messages yet. Send a pigeon!'}
+          </p>
+          {!query.trim() && (
+            <Link to="/send" className="btn btn-primary" style={{ marginTop: 16 }}>
+              Send
+            </Link>
+          )}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {items.map(({ message, delivery, other }) => {
-          const isSender = message.sender_id === user?.id;
-          const isReceiver = message.receiver_id === user?.id;
-          const isUnread = isReceiver && !message.read_at;
-          const isNew =
-            isUnread &&
-            delivery &&
-            RECEIVER_VISIBLE_STATUSES.has(delivery.status);
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {filtered.map((t) => {
+          const del = t.lastDelivery;
+          const preview = previewLine(t.lastMessage, del, user!.id);
+          const tag = statusTag(del, t.unread > 0);
+          const href = del ? `/delivery/${del.id}` : '#';
+          const isNew = t.unread > 0;
 
           return (
             <div
-              key={message.id}
+              key={t.otherId}
               className="card"
               style={{
                 borderLeft: isNew ? '4px solid var(--accent)' : '4px solid transparent',
                 background: isNew ? '#f0f7ff' : undefined,
-                fontWeight: isNew ? 600 : undefined,
+                padding: 12,
               }}
             >
-              <Link
-                to={delivery ? `/delivery/${delivery.id}` : '#'}
-                style={{ display: 'block', color: 'inherit', textDecoration: 'none' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {other?.display_name || 'Unknown'}
+              <Link to={href} style={{ display: 'flex', gap: 12, color: 'inherit', textDecoration: 'none' }}>
+                <PigeonAvatar spriteId={t.otherSprite} size={48} name={t.other?.display_name} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <strong
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontWeight: isNew ? 700 : 600,
+                      }}
+                    >
+                      {t.other?.display_name || 'Unknown'}
                     </strong>
-                    {isNew && (
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                      {formatDistanceToNow(new Date(t.lastMessage.created_at), { addSuffix: true })}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    {tag && (
                       <span
                         style={{
-                          flexShrink: 0,
                           fontSize: 10,
-                          fontWeight: 800,
-                          letterSpacing: 0.4,
-                          color: '#fff',
-                          background: 'var(--accent)',
+                          fontWeight: 700,
                           padding: '2px 6px',
                           borderRadius: 6,
+                          background:
+                            tag === 'Flying'
+                              ? '#fff4e5'
+                              : tag === 'New'
+                                ? 'var(--accent)'
+                                : '#f2f2f7',
+                          color: tag === 'New' ? '#fff' : '#333',
+                          flexShrink: 0,
                         }}
                       >
-                        NEW
+                        {tag}
                       </span>
                     )}
+                    {preview ? (
+                      <span
+                        style={{
+                          fontSize: 13,
+                          color: 'var(--text-secondary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {preview}
+                      </span>
+                    ) : null}
                   </div>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 }}>
-                    {formatDistanceToNow(new Date(message.created_at), { addSuffix: true })}
-                  </span>
-                </div>
-
-                <p
-                  style={{
-                    fontSize: 14,
-                    color: isNew ? 'var(--text)' : 'var(--text-secondary)',
-                    marginBottom: 6,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {isSender ? 'You: ' : ''}
-                  {message.content}
-                </p>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                    {statusLabel(delivery, isSender)}
-                  </span>
-                  {isUnread && isNew && (
-                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>Unread</span>
-                  )}
-                  {isReceiver && message.read_at && (
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Read</span>
+                  {t.unread > 1 && (
+                    <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4 }}>
+                      {t.unread} unread
+                    </div>
                   )}
                 </div>
+                {isNew && (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: 'var(--accent)',
+                      marginTop: 6,
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
               </Link>
-              {other && other.id !== user?.id && (
+              {t.other && (
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
+                  onClick={() =>
                     setReportTarget({
-                      id: other.id,
-                      username: other.username,
-                      messageId: message.id,
-                    });
-                  }}
+                      id: t.other!.id,
+                      username: t.other!.username,
+                      messageId: t.lastMessage.id,
+                    })
+                  }
                   style={{
                     marginTop: 8,
                     fontSize: 12,

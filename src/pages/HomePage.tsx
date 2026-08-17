@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
 import PigeonAvatar from '../components/PigeonAvatar';
-import { spriteLabel } from '../lib/pigeonAppearance';
 
 export default function HomePage() {
   const { profile, pigeon, claimDailyReward } = useAuth();
@@ -108,7 +107,6 @@ export default function HomePage() {
         </p>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 4 }}>
           PID: {profile.pigeon_id}
-          {pigeon?.sprite_id ? ` · ${spriteLabel(pigeon.sprite_id)}` : ''}
         </p>
 
         <div

@@ -1852,6 +1852,7 @@ export default function AdminPage() {
                 'failure_probability',
                 'daily_stamp_reward',
                 'pigeon_base_speed_mph',
+                'km_per_stamp',
                 'signup_stamp_bonus',
                 'sending_paused',
                 'maintenance_mode',

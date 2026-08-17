@@ -24,14 +24,19 @@ export default function FriendsPage() {
       .or(`requester_id.eq.${user.id},receiver_id.eq.${user.id}`);
 
     if (!fs) return;
+    const otherIds = [...new Set(fs.map((f) => (f.requester_id === user.id ? f.receiver_id : f.requester_id)))];
+    const { data: profiles } = otherIds.length
+      ? await supabase.from('profiles').select('*').in('id', otherIds)
+      : { data: [] as Profile[] };
+    const byId = new Map((profiles || []).map((p) => [p.id, p as Profile]));
+
     const accepted: typeof friends = [];
     const pend: typeof pending = [];
-
     for (const f of fs) {
       const otherId = f.requester_id === user.id ? f.receiver_id : f.requester_id;
-      const { data: other } = await supabase.from('profiles').select('*').eq('id', otherId).single();
+      const other = byId.get(otherId);
       if (!other) continue;
-      const item = { ...f, other: other as Profile } as Friendship & { other: Profile };
+      const item = { ...f, other } as Friendship & { other: Profile };
       if (f.status === 'accepted') accepted.push(item);
       else if (f.status === 'pending' && f.receiver_id === user.id) pend.push(item);
     }

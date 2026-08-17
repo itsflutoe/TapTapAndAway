@@ -28,14 +28,17 @@ export default function FriendProfilePage() {
         return;
       }
 
-      const { data: fs } = await supabase
+      const { data: fsRows } = await supabase
         .from('friendships')
         .select('*')
         .eq('status', 'accepted')
-        .or(
-          `and(requester_id.eq.${user.id},receiver_id.eq.${userId}),and(requester_id.eq.${userId},receiver_id.eq.${user.id})`
-        )
-        .maybeSingle();
+        .or(`requester_id.eq.${user.id},receiver_id.eq.${user.id}`);
+
+      const fs = (fsRows || []).find(
+        (f) =>
+          (f.requester_id === user.id && f.receiver_id === userId) ||
+          (f.receiver_id === user.id && f.requester_id === userId)
+      );
 
       if (!fs) {
         setError('Only accepted friends can view this profile.');

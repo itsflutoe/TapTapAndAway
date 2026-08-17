@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   haversineKm,
   calculateStampCost,
+  fetchKmPerStamp,
   calculateFlightSeconds,
   applyTimeMultiplier,
   getWeatherForRoute,
@@ -87,7 +88,12 @@ export default function SendPage() {
       p.latitude,
       p.longitude
     );
-    const baseCost = calculateStampCost(distanceKm);
+    const kmPerStamp = await fetchKmPerStamp(async (key) => {
+      const { data } = await supabase.from('system_settings').select('value').eq('key', key).maybeSingle();
+      if (data?.value == null) return null;
+      return typeof data.value === 'string' ? data.value : JSON.stringify(data.value);
+    });
+    const baseCost = calculateStampCost(distanceKm, kmPerStamp);
     const effects = await getEventEffects();
     let cost = baseCost;
     if (effects.free_sends) cost = 0;

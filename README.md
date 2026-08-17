@@ -63,6 +63,26 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 
 Find these under **Project Settings → API**.
 
+### Important Supabase Auth settings (required for username signup)
+
+In **Authentication → Providers → Email**:
+
+1. Enable Email provider.
+2. **Disable "Confirm email"** for Phase 1 testing (otherwise users cannot log in without a real mailbox).
+3. Leave "Secure email change" as desired.
+
+In **Authentication → URL Configuration**, add your Vercel URL to Site URL and Redirect URLs.
+
+After the initial schema, if signup still returns HTTP 500, run:
+
+`supabase/migrations/002_fix_signup_trigger.sql`
+
+in the SQL Editor. That hardens the profile/pigeon trigger that runs on every new auth user.
+
+Internal emails are stored as `username@taptap.app` — users never see or type an email.
+
+
+
 ### 4. Run locally
 
 ```bash

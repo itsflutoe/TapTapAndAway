@@ -35,6 +35,8 @@ export interface Pigeon {
   name: string;
   gender: PigeonGender;
   species: string;
+  /** Artwork id e.g. basic-07 — NOT profiles.pigeon_id */
+  sprite_id: string | null;
   speed: number;
   stamina: number;
   reliability: number;

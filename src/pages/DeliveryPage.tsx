@@ -53,7 +53,6 @@ export default function DeliveryPage() {
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [receiver, setReceiver] = useState<Profile | null>(null);
-  const [sender, setSender] = useState<Profile | null>(null);
   const [senderSprite, setSenderSprite] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [pigeonPos, setPigeonPos] = useState<[number, number] | null>(null);
@@ -77,22 +76,14 @@ export default function DeliveryPage() {
           .eq('id', m.receiver_id)
           .single();
         setReceiver(r as Profile);
-        const { data: s } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', m.sender_id)
-          .single();
-        setSender(s as Profile);
-        if (s) {
-          const { data: pig } = await supabase
-            .from('pigeons')
-            .select('sprite_id')
-            .eq('owner_id', s.id)
-            .eq('is_active', true)
-            .limit(1)
-            .maybeSingle();
-          setSenderSprite((pig as { sprite_id?: string } | null)?.sprite_id ?? null);
-        }
+        const { data: pig } = await supabase
+          .from('pigeons')
+          .select('sprite_id')
+          .eq('owner_id', m.sender_id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        setSenderSprite((pig as { sprite_id?: string } | null)?.sprite_id ?? null);
       }
     })();
   }, [deliveryId]);

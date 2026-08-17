@@ -25,6 +25,7 @@ export interface Profile {
   is_banned: boolean;
   is_admin: boolean;
   tutorial_completed: boolean;
+  last_seen_at?: string | null;
   created_at: string;
   updated_at: string;
 }

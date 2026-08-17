@@ -31,8 +31,22 @@ export function mphToKmh(mph: number): number {
   return mph * 1.60934;
 }
 
-export function calculateStampCost(distanceKm: number): number {
-  return Math.max(1, Math.ceil(distanceKm / 70));
+export function calculateStampCost(distanceKm: number, kmPerStamp = 10): number {
+  const per = Number(kmPerStamp);
+  const k = Number.isFinite(per) && per > 0 ? per : 10;
+  return Math.max(1, Math.ceil(distanceKm / k));
+}
+
+export async function fetchKmPerStamp(
+  getSetting: (key: string) => Promise<string | null>
+): Promise<number> {
+  try {
+    const raw = await getSetting('km_per_stamp');
+    const n = raw != null ? Number(String(raw).replace(/"/g, '')) : 10;
+    return Number.isFinite(n) && n > 0 ? n : 10;
+  } catch {
+    return 10;
+  }
 }
 
 export async function geocodeAddress(address: string): Promise<GeocodeResult | null> {

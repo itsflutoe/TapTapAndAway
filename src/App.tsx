@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import HomePage from './pages/HomePage';
 import InboxPage from './pages/InboxPage';
+import ConversationPage from './pages/ConversationPage';
 import SendPage from './pages/SendPage';
 import FriendsPage from './pages/FriendsPage';
 import ProfilePage from './pages/ProfilePage';
@@ -77,6 +78,17 @@ function AppRoutes() {
           <ProtectedRoute>
             <div className="app-shell">
               <InboxPage />
+              <BottomNav />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/inbox/:userId"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell">
+              <ConversationPage />
               <BottomNav />
             </div>
           </ProtectedRoute>

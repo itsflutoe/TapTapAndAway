@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  enableBrowserNotifications,
+  getNotificationPref,
+  isBrowserNotificationsEnabled,
+  showLocalNotification,
+  type NotificationPref,
+} from '../lib/browserNotifications';
 
 interface Notif {
   id: string;
@@ -17,6 +24,10 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notif[]>([]);
   const [unread, setUnread] = useState(0);
+  const [browserPref, setBrowserPref] = useState<NotificationPref>(() => getNotificationPref());
+  const [permBusy, setPermBusy] = useState(false);
+  const knownIdsRef = useRef<Set<string>>(new Set());
+  const primedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -27,6 +38,22 @@ export default function NotificationBell() {
       .order('created_at', { ascending: false })
       .limit(40);
     const rows = (data as Notif[]) || [];
+
+    // After first successful load, surface *new* rows as OS notifications (if enabled)
+    if (primedRef.current && isBrowserNotificationsEnabled()) {
+      for (const n of rows) {
+        if (!n.read && !knownIdsRef.current.has(n.id)) {
+          void showLocalNotification(n.title, {
+            body: n.message,
+            tag: n.id,
+            url: '/',
+          });
+        }
+      }
+    }
+    knownIdsRef.current = new Set(rows.map((r) => r.id));
+    primedRef.current = true;
+
     setItems(rows);
     setUnread(rows.filter((n) => !n.read).length);
   }, [user]);
@@ -62,6 +89,13 @@ export default function NotificationBell() {
     void load();
   };
 
+  const onEnableBrowser = async () => {
+    setPermBusy(true);
+    const pref = await enableBrowserNotifications();
+    setBrowserPref(pref);
+    setPermBusy(false);
+  };
+
   if (!user) return null;
 
   return (
@@ -71,7 +105,10 @@ export default function NotificationBell() {
         aria-label="Notifications"
         onClick={() => {
           setOpen((v) => !v);
-          if (!open) void load();
+          if (!open) {
+            void load();
+            setBrowserPref(getNotificationPref());
+          }
         }}
         style={{
           background: 'none',
@@ -141,6 +178,7 @@ export default function NotificationBell() {
                 position: 'sticky',
                 top: 0,
                 background: '#fff',
+                zIndex: 1,
               }}
             >
               <strong style={{ fontSize: 15 }}>Notifications</strong>
@@ -161,6 +199,48 @@ export default function NotificationBell() {
                 </button>
               )}
             </div>
+
+            {/* Browser alerts — opt-in only */}
+            {browserPref !== 'unsupported' && (
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderBottom: '1px solid #f0f0f0',
+                  background: '#fafafa',
+                  fontSize: 12,
+                  color: '#555',
+                }}
+              >
+                {browserPref === 'enabled' ? (
+                  <span>Browser alerts are on. New items can show on your device while the app is open.</span>
+                ) : browserPref === 'denied' ? (
+                  <span>Browser alerts blocked. Enable them in your browser site settings if you change your mind.</span>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ flex: 1 }}>Get alerts on this device for new notifications.</span>
+                    <button
+                      type="button"
+                      disabled={permBusy}
+                      onClick={() => void onEnableBrowser()}
+                      style={{
+                        border: 'none',
+                        background: '#007AFF',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: 11,
+                        padding: '6px 10px',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                      }}
+                    >
+                      Enable
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {items.length === 0 && (
               <p style={{ padding: 20, color: '#888', fontSize: 14, textAlign: 'center' }}>
                 No notifications yet.

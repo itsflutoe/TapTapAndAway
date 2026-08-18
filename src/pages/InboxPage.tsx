@@ -7,6 +7,7 @@ import { formatDistanceToNow } from 'date-fns';
 import PageHeader from '../components/PageHeader';
 import ReportModal from '../components/ReportModal';
 import PigeonAvatar from '../components/PigeonAvatar';
+import { resolveOverdueDeliveriesForUser } from '../services/messaging';
 
 interface RawItem {
   message: Message;
@@ -82,6 +83,13 @@ export default function InboxPage() {
   const load = async () => {
     if (!user) return;
     setLoading(true);
+
+    // Resolve flights past ETA even if Delivery page was never opened
+    try {
+      await resolveOverdueDeliveriesForUser(user.id);
+    } catch {
+      /* non-fatal */
+    }
 
     const { data: messages } = await supabase
       .from('messages')

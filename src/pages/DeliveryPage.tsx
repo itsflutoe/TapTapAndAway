@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { completeDelivery, markMessageRead } from '../services/messaging';
+import { completeDelivery, markMessageRead, updateDeliveryProgress } from '../services/messaging';
 import { formatDuration } from '../lib/geo';
 import { getSpriteMeta } from '../lib/pigeonAppearance';
 import type { Delivery, Message, Profile } from '../types';
@@ -160,6 +160,8 @@ export default function DeliveryPage() {
     const durationMs = delivery.estimated_duration_seconds * 1000;
     const start = new Date(delivery.actual_departure).getTime();
 
+    let lastDbProgress = -1;
+
     const tick = () => {
       const elapsed = Date.now() - start;
       const pct = Math.min(100, (elapsed / durationMs) * 100);
@@ -173,6 +175,13 @@ export default function DeliveryPage() {
         delivery.origin_longitude +
         (delivery.destination_longitude - delivery.origin_longitude) * t;
       setPigeonPos([lat, lng]);
+
+      // Throttle DB progress writes (~every 10%) so Conversation/Admin stay in sync
+      const bucket = Math.floor(pct / 10) * 10;
+      if (bucket !== lastDbProgress && bucket < 100) {
+        lastDbProgress = bucket;
+        void updateDeliveryProgress(delivery.id, bucket);
+      }
 
       if (pct >= 100 && !completedRef.current) {
         const now = Date.now();
@@ -212,7 +221,7 @@ export default function DeliveryPage() {
 
   const origin: [number, number] = [delivery.origin_latitude, delivery.origin_longitude];
   const dest: [number, number] = [delivery.destination_latitude, delivery.destination_longitude];
-  const isDone = ['DELIVERED', 'READ', 'FAILED'].includes(delivery.status);
+  const isDone = ['DELIVERED', 'READ', 'FAILED', 'ARRIVED'].includes(delivery.status);
   const isFailed = delivery.status === 'FAILED';
   const isSender = user?.id === message.sender_id;
   const isReceiver = user?.id === message.receiver_id;

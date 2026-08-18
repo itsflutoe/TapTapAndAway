@@ -5,9 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
 import PigeonAvatar from '../components/PigeonAvatar';
+import { resolveOverdueDeliveriesForUser } from '../services/messaging';
 
 export default function HomePage() {
-  const { profile, pigeon, claimDailyReward } = useAuth();
+  const { user, profile, pigeon, claimDailyReward } = useAuth();
   const [rewardMsg, setRewardMsg] = useState('');
 
   useEffect(() => {
@@ -18,6 +19,11 @@ export default function HomePage() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    void resolveOverdueDeliveriesForUser(user.id).catch(() => undefined);
+  }, [user?.id]);
 
   if (!profile) return null;
 

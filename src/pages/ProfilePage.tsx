@@ -5,6 +5,13 @@ import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
 import PigeonAvatar from '../components/PigeonAvatar';
 import type { Delivery } from '../types';
+import {
+  disableBrowserNotifications,
+  enableBrowserNotifications,
+  getNotificationPref,
+  type NotificationPref,
+} from '../lib/browserNotifications';
+import { isStandalone, promptInstall, subscribeInstallAvailability } from '../lib/pwa';
 
 interface HistoryItem {
   delivery: Delivery;
@@ -20,6 +27,11 @@ export default function ProfilePage() {
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [browserPref, setBrowserPref] = useState<NotificationPref>(() => getNotificationPref());
+  const [canInstall, setCanInstall] = useState(false);
+  const [notifBusy, setNotifBusy] = useState(false);
+
+  useEffect(() => subscribeInstallAvailability(setCanInstall), []);
 
   useEffect(() => {
     if (!user) return;
@@ -173,6 +185,63 @@ export default function ProfilePage() {
           </p>
         </Link>
       ))}
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Device</h2>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.4 }}>
+          Browser alerts are optional. Permission is only requested if you turn them on.
+        </p>
+        {browserPref === 'unsupported' ? (
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>This browser does not support notifications.</p>
+        ) : browserPref === 'enabled' ? (
+          <button
+            type="button"
+            className="btn"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => {
+              disableBrowserNotifications();
+              setBrowserPref(getNotificationPref());
+            }}
+          >
+            Turn off browser alerts (in-app only)
+          </button>
+        ) : browserPref === 'denied' ? (
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            Alerts blocked in browser settings. Change site permissions to allow them again.
+          </p>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ width: '100%', marginBottom: 8 }}
+            disabled={notifBusy}
+            onClick={async () => {
+              setNotifBusy(true);
+              const pref = await enableBrowserNotifications();
+              setBrowserPref(pref);
+              setNotifBusy(false);
+            }}
+          >
+            Enable browser alerts
+          </button>
+        )}
+
+        {!isStandalone() && canInstall && (
+          <button
+            type="button"
+            className="btn"
+            style={{ width: '100%' }}
+            onClick={() => void promptInstall()}
+          >
+            Install app
+          </button>
+        )}
+        {!isStandalone() && !canInstall && (
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+            On iPhone: Share → Add to Home Screen for the app icon.
+          </p>
+        )}
+      </div>
 
       <button
         type="button"

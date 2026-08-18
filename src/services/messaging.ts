@@ -280,7 +280,7 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
       weather: weather.condition,
       weather_multiplier: weather.multiplier,
       estimated_duration_seconds: estimatedSeconds,
-      status: 'DISPATCHED',
+      status: 'FLYING',
       actual_departure: new Date().toISOString(),
       progress_percent: 0,
     })
@@ -299,8 +299,70 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
   };
 }
 
+/** Best-effort progress write for Conversation/Admin UI. Non-fatal if blocked. */
+export async function updateDeliveryProgress(
+  deliveryId: string,
+  progressPercent: number
+): Promise<void> {
+  const pct = Math.max(0, Math.min(100, Math.round(progressPercent)));
+  await supabase
+    .from('deliveries')
+    .update({ progress_percent: pct, status: 'FLYING' })
+    .eq('id', deliveryId)
+    .in('status', ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED']);
+}
+
+/**
+ * Complete active deliveries past ETA for this user so flights resolve
+ * even if nobody has the Delivery map page open.
+ */
+export async function resolveOverdueDeliveriesForUser(userId: string): Promise<number> {
+  if (!userId) return 0;
+
+  const { data: msgs } = await supabase
+    .from('messages')
+    .select('id, receiver_id')
+    .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+    .order('created_at', { ascending: false })
+    .limit(40);
+
+  if (!msgs?.length) return 0;
+
+  const msgIds = msgs.map((m) => m.id);
+  const { data: dels } = await supabase
+    .from('deliveries')
+    .select('id, message_id, status, actual_departure, estimated_duration_seconds')
+    .in('message_id', msgIds)
+    .in('status', ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED']);
+
+  if (!dels?.length) return 0;
+
+  const now = Date.now();
+  let n = 0;
+  for (const d of dels) {
+    if (!d.actual_departure || !d.estimated_duration_seconds) continue;
+    const end =
+      new Date(d.actual_departure).getTime() + Number(d.estimated_duration_seconds) * 1000;
+    if (now < end) continue;
+    const msg = msgs.find((m) => m.id === d.message_id);
+    try {
+      await completeDelivery(d.id, d.message_id, msg?.receiver_id || userId);
+      n++;
+    } catch (e) {
+      console.warn('resolveOverdue', d.id, e);
+    }
+  }
+  return n;
+}
+
 /** Statuses a delivery can still be in before it's been resolved. */
-const ACTIVE_DELIVERY_STATUSES = ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED'];
+export const ACTIVE_DELIVERY_STATUSES = [
+  'DRAFT',
+  'PREPARING',
+  'DISPATCHED',
+  'FLYING',
+  'ARRIVED',
+];
 
 export interface CompleteDeliveryResult {
   status: 'DELIVERED' | 'FAILED' | 'READ';

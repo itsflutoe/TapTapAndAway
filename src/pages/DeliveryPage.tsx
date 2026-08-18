@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { completeDelivery, markMessageRead } from '../services/messaging';
 import { formatDuration } from '../lib/geo';
+import { getSpriteMeta } from '../lib/pigeonAppearance';
 import type { Delivery, Message, Profile } from '../types';
 
 const DefaultIcon = L.icon({
@@ -18,13 +19,18 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+/** Map marker: static PNG, or first frame of a sheet (clipped). No color-keying. */
 function makePigeonIcon(spriteId?: string | null) {
-  // Static PNG on map marker if sprite known; emoji fallback
-  if (spriteId && spriteId.startsWith('basic-')) {
-    const url = `/pigeons/basic/${spriteId}.png`;
+  const meta = getSpriteMeta(spriteId);
+  if (meta?.url) {
+    // overflow:hidden + height 32 keeps sheet sprites on frame 0 roughly for square frames
+    const html =
+      meta.kind === 'sheet'
+        ? `<div style="width:32px;height:32px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="${meta.url}" height="32" style="height:32px;width:auto;max-width:none;image-rendering:pixelated" alt="" /></div>`
+        : `<img src="${meta.url}" width="32" height="32" style="image-rendering:pixelated;object-fit:contain" alt="" />`;
     return L.divIcon({
       className: '',
-      html: `<img src="${url}" width="32" height="32" style="image-rendering:pixelated;object-fit:contain" alt="" />`,
+      html,
       iconSize: [32, 32],
       iconAnchor: [16, 16],
     });

@@ -1927,7 +1927,7 @@ export default function AdminPage() {
             <div style={{ ...card, marginTop: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Pigeon sprite</div>
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
-                <PigeonAvatar spriteId={spriteInput || drawerSprite} size={72} />
+                <PigeonAvatar spriteId={spriteInput || drawerSprite} size={72} animate={false} />
               </div>
               <label style={{ fontSize: 12, color: '#a0a8b8' }}>Dropdown (basic starters)</label>
               <select

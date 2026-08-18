@@ -269,7 +269,12 @@ export default function InboxPage() {
               }}
             >
               <Link to={href} style={{ display: 'flex', gap: 12, color: 'inherit', textDecoration: 'none' }}>
-                <PigeonAvatar spriteId={t.otherSprite} size={48} name={t.other?.display_name} />
+                <PigeonAvatar
+                  spriteId={t.otherSprite}
+                  size={48}
+                  name={t.other?.display_name}
+                  animate={false}
+                />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                     <strong

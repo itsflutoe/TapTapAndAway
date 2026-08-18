@@ -255,7 +255,7 @@ export default function InboxPage() {
           const del = t.lastDelivery;
           const preview = previewLine(t.lastMessage, del, user!.id);
           const tag = statusTag(del, t.unread > 0);
-          const href = del ? `/delivery/${del.id}` : '#';
+          const href = `/inbox/${t.otherId}`;
           const isNew = t.unread > 0;
 
           return (

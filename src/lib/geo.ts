@@ -1,4 +1,5 @@
 import type { GeocodeResult, WeatherInfo } from '../types';
+import { supabase } from './supabase';
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -153,7 +154,6 @@ export function formatDuration(seconds: number): string {
 
 export async function fetchTimeMultiplier(): Promise<number> {
   try {
-    const { supabase } = await import('./supabase');
     const { data } = await supabase
       .from('system_settings')
       .select('value')

@@ -16,51 +16,6 @@ import BottomNav from './components/BottomNav';
 import LoadingScreen from './components/LoadingScreen';
 import MaintenanceBanner from './components/MaintenanceBanner';
 
-function AdminUserModeBanner() {
-  const { profile, isAdminMode, setIsAdminMode } = useAuth();
-  const navigate = useNavigate();
-
-  if (!profile?.is_admin || isAdminMode) return null;
-
-  return (
-    <div
-      style={{
-        background: '#1d1d1f',
-        color: '#fff',
-        textAlign: 'center',
-        padding: '8px 12px',
-        fontSize: 12,
-        fontWeight: 600,
-        zIndex: 300,
-        position: 'sticky',
-        top: 0,
-      }}
-    >
-      ADMIN USER MODE{' '}
-      <button
-        type="button"
-        onClick={() => {
-          setIsAdminMode(true);
-          navigate('/admin');
-        }}
-        style={{
-          marginLeft: 8,
-          background: '#0071e3',
-          color: '#fff',
-          padding: '4px 10px',
-          borderRadius: 6,
-          fontSize: 11,
-          border: 'none',
-          cursor: 'pointer',
-          fontWeight: 700,
-        }}
-      >
-        RETURN TO ADMIN
-      </button>
-    </div>
-  );
-}
-
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, isAdminMode } = useAuth();
 
@@ -74,7 +29,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <AdminUserModeBanner />
       <MaintenanceBanner />
       {children}
     </>

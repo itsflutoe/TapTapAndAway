@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
@@ -12,6 +12,18 @@ import {
   type NotificationPref,
 } from '../lib/browserNotifications';
 import { isStandalone, promptInstall, subscribeInstallAvailability } from '../lib/pwa';
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  History,
+  Bell,
+  UserRound,
+  Shield,
+  Info,
+  LogOut,
+  Pencil,
+} from 'lucide-react';
 
 interface HistoryItem {
   delivery: Delivery;
@@ -19,8 +31,11 @@ interface HistoryItem {
   isOutgoing: boolean;
 }
 
+type SectionId = 'account' | 'notifications' | 'app' | 'history' | 'admin' | 'about';
+
 export default function ProfilePage() {
-  const { user, profile, pigeon, signOut, refreshProfile } = useAuth();
+  const { user, profile, pigeon, signOut, refreshProfile, isAdminMode, setIsAdminMode } = useAuth();
+  const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
   const [pigeonName, setPigeonName] = useState(pigeon?.name || '');
@@ -30,6 +45,8 @@ export default function ProfilePage() {
   const [browserPref, setBrowserPref] = useState<NotificationPref>(() => getNotificationPref());
   const [canInstall, setCanInstall] = useState(false);
   const [notifBusy, setNotifBusy] = useState(false);
+  const [installBusy, setInstallBusy] = useState(false);
+  const [openSection, setOpenSection] = useState<SectionId | null>('account');
 
   useEffect(() => subscribeInstallAvailability(setCanInstall), []);
 
@@ -52,14 +69,12 @@ export default function ProfilePage() {
           .eq('message_id', m.id)
           .maybeSingle();
         if (!d) continue;
-        // Pigeon flight history: only trips YOU sent
         if (m.sender_id !== user.id) continue;
         if (!['DELIVERED', 'READ', 'FAILED'].includes(d.status)) continue;
-        const peerId = m.receiver_id;
         const { data: peer } = await supabase
           .from('profiles')
           .select('display_name')
-          .eq('id', peerId)
+          .eq('id', m.receiver_id)
           .maybeSingle();
         items.push({
           delivery: d as Delivery,
@@ -71,15 +86,20 @@ export default function ProfilePage() {
     })();
   }, [user]);
 
+  useEffect(() => {
+    setDisplayName(profile?.display_name || '');
+  }, [profile?.display_name]);
+
+  useEffect(() => {
+    setPigeonName(pigeon?.name || '');
+  }, [pigeon?.name]);
+
   if (!profile) return null;
 
   const save = async () => {
     setSaving(true);
     setMsg('');
-    await supabase
-      .from('profiles')
-      .update({ display_name: displayName })
-      .eq('id', profile.id);
+    await supabase.from('profiles').update({ display_name: displayName }).eq('id', profile.id);
     if (pigeon && pigeonName !== pigeon.name) {
       await supabase.from('pigeons').update({ name: pigeonName }).eq('id', pigeon.id);
     }
@@ -90,10 +110,36 @@ export default function ProfilePage() {
   };
 
   const km = Number(pigeon?.total_distance_km ?? 0);
+  const toggle = (id: SectionId) => setOpenSection((current) => (current === id ? null : id));
+
+  const sectionStyle: CSSProperties = {
+    border: '1px solid var(--border)',
+    borderRadius: 14,
+    overflow: 'hidden',
+    background: 'var(--card)',
+    marginBottom: 10,
+  };
+
+  const sectionButtonStyle: CSSProperties = {
+    width: '100%',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '14px 15px',
+    textAlign: 'left',
+    cursor: 'pointer',
+  };
+
+  const rowStyle: CSSProperties = {
+    padding: '0 15px 15px',
+  };
 
   return (
     <div className="page">
-      <PageHeader title="👤 Profile" />
+      <PageHeader title="⚙️ Settings" />
 
       <div className="card" style={{ textAlign: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
@@ -112,143 +158,220 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {editing ? (
-        <div className="card">
-          <div className="input-group">
-            <label>Display name</label>
-            <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-          </div>
-          <div className="input-group">
-            <label>Pigeon name</label>
-            <input value={pigeonName} onChange={(e) => setPigeonName(e.target.value)} />
-          </div>
-          {msg && <p className="error-text">{msg}</p>}
-          <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ width: '100%', marginTop: 8 }}
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="card">
-          <p>
-            <strong>Address:</strong> {profile.address}
-          </p>
-          <p style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
-            Location is set at signup and can only be changed by an admin.
-          </p>
-          <p style={{ marginTop: 8 }}>
-            <strong>Pigeon:</strong> {pigeon?.name} ({pigeon?.gender})
-          </p>
-          <p style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
-            Joined {new Date(profile.created_at).toLocaleDateString()}
-          </p>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ width: '100%', marginTop: 16 }}
-            onClick={() => setEditing(true)}
-          >
-            Edit profile
-          </button>
-        </div>
+      {msg && (
+        <p style={{ textAlign: 'center', margin: '0 0 10px', color: 'var(--success)' }}>{msg}</p>
       )}
 
-      {msg && !editing && (
-        <p style={{ textAlign: 'center', marginTop: 8, color: 'var(--success)' }}>{msg}</p>
-      )}
-
-      <h2 style={{ fontSize: 16, fontWeight: 700, margin: '20px 0 10px' }}>Delivery history</h2>
-      {history.length === 0 && (
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>No completed deliveries yet.</p>
-      )}
-      {history.map(({ delivery, peerName }) => (
-        <Link
-          key={delivery.id}
-          to={`/delivery/${delivery.id}`}
-          className="card"
-          style={{ display: 'block', marginBottom: 8, textDecoration: 'none', color: 'inherit' }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: 14 }}>To {peerName}</strong>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>{delivery.distance_km} km</span>
+      <div style={sectionStyle}>
+        <button type="button" style={sectionButtonStyle} onClick={() => toggle('account')}>
+          <UserRound size={19} />
+          <span style={{ flex: 1 }}>
+            <strong>Account & Profile</strong>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Your profile and pigeon details
+            </span>
+          </span>
+          {openSection === 'account' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {openSection === 'account' && (
+          <div style={rowStyle}>
+            {editing ? (
+              <div>
+                <div className="input-group">
+                  <label>Display name</label>
+                  <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+                </div>
+                <div className="input-group">
+                  <label>Pigeon name</label>
+                  <input value={pigeonName} onChange={(e) => setPigeonName(e.target.value)} />
+                </div>
+                <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save changes'}
+                </button>
+                <button type="button" className="btn btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => setEditing(false)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <p><strong>Address:</strong> {profile.address}</p>
+                <p style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Location is set at signup and can only be changed by an admin.
+                </p>
+                <p style={{ marginTop: 8 }}><strong>Pigeon:</strong> {pigeon?.name} ({pigeon?.gender})</p>
+                <p style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  Joined {new Date(profile.created_at).toLocaleDateString()}
+                </p>
+                <button type="button" className="btn btn-secondary" style={{ width: '100%', marginTop: 14 }} onClick={() => setEditing(true)}>
+                  <Pencil size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+                  Edit profile
+                </button>
+              </>
+            )}
           </div>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {delivery.status === 'FAILED' ? 'Failed' : delivery.status === 'READ' ? 'Delivered · Read' : 'Delivered'}
-            {delivery.weather ? ` · ${delivery.weather}` : ''}
-          </p>
-        </Link>
-      ))}
-
-      <div className="card" style={{ marginTop: 20 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Device</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.4 }}>
-          Browser alerts are optional. Permission is only requested if you turn them on.
-        </p>
-        {browserPref === 'unsupported' ? (
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>This browser does not support notifications.</p>
-        ) : browserPref === 'enabled' ? (
-          <button
-            type="button"
-            className="btn"
-            style={{ width: '100%', marginBottom: 8 }}
-            onClick={() => {
-              disableBrowserNotifications();
-              setBrowserPref(getNotificationPref());
-            }}
-          >
-            Turn off browser alerts (in-app only)
-          </button>
-        ) : browserPref === 'denied' ? (
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Alerts blocked in browser settings. Change site permissions to allow them again.
-          </p>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ width: '100%', marginBottom: 8 }}
-            disabled={notifBusy}
-            onClick={async () => {
-              setNotifBusy(true);
-              const pref = await enableBrowserNotifications();
-              setBrowserPref(pref);
-              setNotifBusy(false);
-            }}
-          >
-            Enable browser alerts
-          </button>
-        )}
-
-        {!isStandalone() && canInstall && (
-          <button
-            type="button"
-            className="btn"
-            style={{ width: '100%' }}
-            onClick={() => void promptInstall()}
-          >
-            Install app
-          </button>
-        )}
-        {!isStandalone() && !canInstall && (
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
-            On iPhone: Share → Add to Home Screen for the app icon.
-          </p>
         )}
       </div>
 
-      <button
-        type="button"
-        className="btn"
-        style={{ width: '100%', marginTop: 24, color: 'var(--danger)', fontWeight: 600 }}
-        onClick={() => signOut()}
-      >
+      <div style={sectionStyle}>
+        <button type="button" style={sectionButtonStyle} onClick={() => toggle('notifications')}>
+          <Bell size={19} />
+          <span style={{ flex: 1 }}>
+            <strong>Notifications</strong>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Browser alerts and notification preferences
+            </span>
+          </span>
+          {openSection === 'notifications' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {openSection === 'notifications' && (
+          <div style={rowStyle}>
+            {browserPref === 'unsupported' ? (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>This browser does not support notifications.</p>
+            ) : browserPref === 'enabled' ? (
+              <button type="button" className="btn" style={{ width: '100%' }} onClick={() => {
+                disableBrowserNotifications();
+                setBrowserPref(getNotificationPref());
+              }}>
+                Turn off browser alerts
+              </button>
+            ) : browserPref === 'denied' ? (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                Alerts are blocked in browser settings. Change the site permission to allow them again.
+              </p>
+            ) : (
+              <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={notifBusy} onClick={async () => {
+                setNotifBusy(true);
+                const pref = await enableBrowserNotifications();
+                setBrowserPref(pref);
+                setNotifBusy(false);
+              }}>
+                {notifBusy ? 'Enabling…' : 'Enable browser alerts'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={sectionStyle}>
+        <button type="button" style={sectionButtonStyle} onClick={() => toggle('app')}>
+          <Download size={19} />
+          <span style={{ flex: 1 }}>
+            <strong>App</strong>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Install Tap Tap & Away on your device
+            </span>
+          </span>
+          {openSection === 'app' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {openSection === 'app' && (
+          <div style={rowStyle}>
+            {isStandalone() ? (
+              <p style={{ fontSize: 13, color: 'var(--success)' }}>✓ Tap Tap & Away is already installed.</p>
+            ) : canInstall ? (
+              <>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: 10 }}>
+                  Install the app for a cleaner, full-screen experience.
+                </p>
+                <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={installBusy} onClick={async () => {
+                  setInstallBusy(true);
+                  await promptInstall();
+                  setInstallBusy(false);
+                }}>
+                  {installBusy ? 'Opening install…' : 'Install app'}
+                </button>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                Your browser does not currently offer automatic installation. On iPhone/iPad, use Share → Add to Home Screen.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={sectionStyle}>
+        <button type="button" style={sectionButtonStyle} onClick={() => toggle('history')}>
+          <History size={19} />
+          <span style={{ flex: 1 }}>
+            <strong>Delivery History</strong>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              {history.length} completed trip{history.length === 1 ? '' : 's'}
+            </span>
+          </span>
+          {openSection === 'history' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {openSection === 'history' && (
+          <div style={rowStyle}>
+            {history.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>No completed deliveries yet.</p>
+            ) : (
+              history.map(({ delivery, peerName }) => (
+                <Link key={delivery.id} to={`/delivery/${delivery.id}`} className="card" style={{ display: 'block', marginBottom: 8, textDecoration: 'none', color: 'inherit', padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: 14 }}>To {peerName}</strong>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{delivery.distance_km} km</span>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    {delivery.status === 'FAILED' ? 'Failed' : delivery.status === 'READ' ? 'Delivered · Read' : 'Delivered'}
+                    {delivery.weather ? ` · ${delivery.weather}` : ''}
+                  </p>
+                </Link>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {profile.is_admin && !isAdminMode && (
+        <div style={sectionStyle}>
+          <button type="button" style={sectionButtonStyle} onClick={() => toggle('admin')}>
+            <Shield size={19} />
+            <span style={{ flex: 1 }}>
+              <strong>Administration</strong>
+              <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                Admin-only tools
+              </span>
+            </span>
+            {openSection === 'admin' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </button>
+          {openSection === 'admin' && (
+            <div style={rowStyle}>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Open the admin panel from here. Your admin permissions are unchanged.
+              </p>
+              <button type="button" className="btn btn-primary" style={{ width: '100%' }} onClick={() => {
+                setIsAdminMode(true);
+                navigate('/admin');
+              }}>
+                Open Admin Panel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={sectionStyle}>
+        <button type="button" style={sectionButtonStyle} onClick={() => toggle('about')}>
+          <Info size={19} />
+          <span style={{ flex: 1 }}>
+            <strong>About</strong>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              App information
+            </span>
+          </span>
+          {openSection === 'about' ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {openSection === 'about' && (
+          <div style={rowStyle}>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              Tap Tap & Away · Your messages travel by pigeon.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <button type="button" className="btn" style={{ width: '100%', marginTop: 18, color: 'var(--danger)', fontWeight: 600 }} onClick={() => void signOut()}>
+        <LogOut size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
         Sign out
       </button>
     </div>

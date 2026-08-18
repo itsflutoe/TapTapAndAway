@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
 import PigeonAvatar from '../components/PigeonAvatar';
-import InstallAppBanner from '../components/InstallAppBanner';
 
 export default function HomePage() {
   const { profile, pigeon, claimDailyReward } = useAuth();
@@ -59,8 +58,6 @@ export default function HomePage() {
           </Link>
         </div>
       </header>
-
-      <InstallAppBanner />
 
       {rewardMsg && (
         <div

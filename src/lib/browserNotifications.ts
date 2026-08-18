@@ -2,9 +2,11 @@
  * Browser / OS notification helpers.
  * - Permission is never requested on page load — only via enableBrowserNotifications().
  * - Local alerts when the app is open (Realtime → Notification API).
- * - PushSubscription is collected client-side when VITE_VAPID_PUBLIC_KEY is set;
- *   true background push still needs a server holding the VAPID *private* key.
+ * - PushSubscription saved to Supabase so Edge Function can send when app is closed.
+ * - VAPID *private* key never ships in the frontend.
  */
+
+import { supabase } from './supabase';
 
 const PREF_KEY = 'tta_browser_notifications';
 const PUSH_KEY = 'tta_push_subscription';
@@ -26,7 +28,6 @@ export function getNotificationPref(): NotificationPref {
     /* ignore */
   }
   if (Notification.permission === 'granted') {
-    // Granted in browser but user may not have opted in via our UI
     try {
       if (localStorage.getItem(PREF_KEY) === 'enabled') return 'enabled';
     } catch {
@@ -63,7 +64,7 @@ export async function enableBrowserNotifications(): Promise<NotificationPref> {
     } catch {
       /* ignore */
     }
-    void trySubscribePush();
+    await trySubscribePush();
     return 'enabled';
   }
 
@@ -85,7 +86,6 @@ export function disableBrowserNotifications(): void {
   } catch {
     /* ignore */
   }
-  // Cannot revoke browser permission from JS; user must change it in browser settings.
   void unsubscribePush();
 }
 
@@ -130,10 +130,26 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return out;
 }
 
+async function persistSubscriptionToServer(json: PushSubscriptionJSON): Promise<void> {
+  const endpoint = json.endpoint;
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!endpoint || !p256dh || !auth) return;
+
+  const { error } = await supabase.rpc('save_push_subscription', {
+    p_endpoint: endpoint,
+    p_p256dh: p256dh,
+    p_auth: auth,
+    p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 300) : null,
+  });
+  if (error) {
+    console.warn('[PWA] Failed to save push subscription to server:', error.message);
+  }
+}
+
 /**
  * Subscribe for Web Push if a *public* VAPID key is configured.
- * Private key must never ship in the frontend.
- * Subscription JSON is stored in localStorage for a future backend to read/send.
+ * Saves subscription to Supabase for the Edge Function sender.
  */
 export async function trySubscribePush(): Promise<PushSubscriptionJSON | null> {
   if (!isBrowserNotificationsEnabled()) return null;
@@ -141,7 +157,6 @@ export async function trySubscribePush(): Promise<PushSubscriptionJSON | null> {
 
   const vapid = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined)?.trim();
   if (!vapid) {
-    // Infrastructure ready; no public key configured yet — skip without error.
     return null;
   }
 
@@ -160,19 +175,25 @@ export async function trySubscribePush(): Promise<PushSubscriptionJSON | null> {
     } catch {
       /* ignore */
     }
+    await persistSubscriptionToServer(json);
     return json;
   } catch (err) {
-    console.warn('[PWA] Push subscribe failed (client infrastructure only):', err);
+    console.warn('[PWA] Push subscribe failed:', err);
     return null;
   }
 }
 
 export async function unsubscribePush(): Promise<void> {
+  let endpoint: string | null = null;
   try {
-    if (!('serviceWorker' in navigator)) return;
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (sub) await sub.unsubscribe();
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        endpoint = sub.endpoint;
+        await sub.unsubscribe();
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -180,6 +201,13 @@ export async function unsubscribePush(): Promise<void> {
     localStorage.removeItem(PUSH_KEY);
   } catch {
     /* ignore */
+  }
+  try {
+    await supabase.rpc('delete_push_subscription', {
+      p_endpoint: endpoint,
+    });
+  } catch {
+    /* ignore — migration may not be applied yet */
   }
 }
 

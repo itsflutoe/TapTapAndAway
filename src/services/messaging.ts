@@ -299,11 +299,30 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
   };
 }
 
+/** Statuses a delivery can still be in before it's been resolved. */
+const ACTIVE_DELIVERY_STATUSES = ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED'];
+
+export interface CompleteDeliveryResult {
+  status: 'DELIVERED' | 'FAILED' | 'READ';
+}
+
+/**
+ * Resolves a delivery to DELIVERED or FAILED.
+ *
+ * Idempotent by design: this can be called more than once for the same
+ * delivery (e.g. the sender's and receiver's tabs both reach the end of
+ * the flight, or a client retries after a dropped response) without ever
+ * double-refunding Stamps, double-counting pigeon stats, or sending a
+ * duplicate notification. Only the caller whose UPDATE actually flips the
+ * delivery out of an active status runs the side effects; every other
+ * caller just gets back the delivery's real, current status from the DB —
+ * the frontend never decides completion on its own.
+ */
 export async function completeDelivery(
   deliveryId: string,
   messageId: string,
   receiverId: string
-) {
+): Promise<CompleteDeliveryResult> {
   const failChance = 0.005;
   const failed = Math.random() < failChance;
 
@@ -317,10 +336,16 @@ export async function completeDelivery(
         progress_percent: 100,
       })
       .eq('id', deliveryId)
+      .in('status', ACTIVE_DELIVERY_STATUSES)
       .select('pigeon_id')
       .maybeSingle();
 
-    if (failRow?.pigeon_id) {
+    if (!failRow) {
+      // Someone else already resolved this delivery — report the real status.
+      return await fetchResolvedStatus(deliveryId, 'FAILED');
+    }
+
+    if (failRow.pigeon_id) {
       await supabase.rpc('record_failed_flight', { p_pigeon_id: failRow.pigeon_id });
     }
 
@@ -338,7 +363,7 @@ export async function completeDelivery(
         p_description: 'Failed delivery refund',
       });
     }
-    return { status: 'FAILED' as const };
+    return { status: 'FAILED' };
   }
 
   const { data: delRow } = await supabase
@@ -349,10 +374,16 @@ export async function completeDelivery(
       progress_percent: 100,
     })
     .eq('id', deliveryId)
+    .in('status', ACTIVE_DELIVERY_STATUSES)
     .select('pigeon_id, distance_km')
     .maybeSingle();
 
-  if (delRow?.pigeon_id) {
+  if (!delRow) {
+    // Someone else already resolved this delivery — report the real status.
+    return await fetchResolvedStatus(deliveryId, 'DELIVERED');
+  }
+
+  if (delRow.pigeon_id) {
     await supabase.rpc('record_successful_flight', {
       p_pigeon_id: delRow.pigeon_id,
       p_distance_km: delRow.distance_km,
@@ -367,7 +398,21 @@ export async function completeDelivery(
     data: { message_id: messageId },
   });
 
-  return { status: 'DELIVERED' as const };
+  return { status: 'DELIVERED' };
+}
+
+/** Reads back the delivery's authoritative status when this caller lost the completion race. */
+async function fetchResolvedStatus(
+  deliveryId: string,
+  fallback: CompleteDeliveryResult['status']
+): Promise<CompleteDeliveryResult> {
+  const { data } = await supabase
+    .from('deliveries')
+    .select('status')
+    .eq('id', deliveryId)
+    .single();
+  const status = data?.status as CompleteDeliveryResult['status'] | undefined;
+  return { status: status ?? fallback };
 }
 
 export async function markMessageRead(messageId: string) {

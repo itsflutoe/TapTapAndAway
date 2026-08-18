@@ -76,17 +76,19 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-/** True background push requires a server that encrypts with VAPID private key. */
+/** True background push — payload from Edge Function send-push. */
 self.addEventListener('push', (event) => {
   let title = 'Tap Tap and Away';
   let body = 'You have a new update';
   let data = { url: '/' };
+  let tag = 'tta-push';
   try {
     if (event.data) {
       const payload = event.data.json();
       title = payload.title || title;
       body = payload.body || payload.message || body;
-      data = payload.data || data;
+      tag = payload.tag || tag;
+      data = { url: payload.url || payload.data?.url || '/' };
     }
   } catch {
     try {
@@ -100,6 +102,7 @@ self.addEventListener('push', (event) => {
       body,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
+      tag,
       data,
     })
   );

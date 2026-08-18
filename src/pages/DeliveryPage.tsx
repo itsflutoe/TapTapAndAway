@@ -64,6 +64,7 @@ export default function DeliveryPage() {
   const [pigeonPos, setPigeonPos] = useState<[number, number] | null>(null);
   const [letterExpanded, setLetterExpanded] = useState(false);
   const completedRef = useRef(false);
+  const lastCompletionAttemptRef = useRef(0);
 
   useEffect(() => {
     if (!deliveryId) return;
@@ -92,6 +93,46 @@ export default function DeliveryPage() {
         setSenderSprite((pig as { sprite_id?: string } | null)?.sprite_id ?? null);
       }
     })();
+  }, [deliveryId]);
+
+  /** Re-reads this delivery's row from the DB and applies it as the authoritative state. */
+  const resyncDelivery = async () => {
+    if (!deliveryId) return;
+    const { data: d } = await supabase.from('deliveries').select('*').eq('id', deliveryId).single();
+    if (d) setDelivery(d as Delivery);
+  };
+
+  // Realtime: any change to this delivery (this tab's own completion, another
+  // tab, or an admin action) is re-read from the DB and becomes the new source
+  // of truth. The local flight animation never decides status on its own.
+  useEffect(() => {
+    if (!deliveryId) return;
+    const channel = supabase
+      .channel(`delivery-${deliveryId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'deliveries', filter: `id=eq.${deliveryId}` },
+        () => void resyncDelivery()
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [deliveryId]);
+
+  // Reconnect / refresh: catch up on anything missed while the tab was
+  // backgrounded, offline, or the realtime socket briefly dropped.
+  useEffect(() => {
+    if (!deliveryId) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void resyncDelivery();
+    };
+    window.addEventListener('online', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [deliveryId]);
 
   useEffect(() => {
@@ -134,15 +175,25 @@ export default function DeliveryPage() {
       setPigeonPos([lat, lng]);
 
       if (pct >= 100 && !completedRef.current) {
+        const now = Date.now();
+        // Simple backoff so a network hiccup doesn't hammer the RPC every 200ms.
+        if (now - lastCompletionAttemptRef.current < 2000) return;
+        lastCompletionAttemptRef.current = now;
         completedRef.current = true;
-        void completeDelivery(delivery.id, delivery.message_id, message?.receiver_id || '').then(
-          async (res) => {
+        void completeDelivery(delivery.id, delivery.message_id, message?.receiver_id || '')
+          .then(async (res) => {
+            // res.status comes from the actual DB write (or, if another tab/admin
+            // resolved it first, a fresh read) — never a locally-guessed value.
             setDelivery((prev) =>
               prev ? { ...prev, status: res.status, progress_percent: 100 } : prev
             );
             await refreshProfile();
-          }
-        );
+          })
+          .catch((err) => {
+            console.error('Failed to complete delivery:', err);
+            // Don't leave the UI stuck at 100% forever — allow a retry.
+            completedRef.current = false;
+          });
       }
     };
 

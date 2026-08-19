@@ -1,9 +1,9 @@
 /* Tap Tap and Away — service worker
- * Caches app shell for offline shell load.
- * Handles notification clicks.
- * Push event handler is ready for a future server sender (VAPID private key stays server-side).
+ * - Network-first for navigations and hashed assets so deploys update promptly
+ * - Does NOT cache Supabase / third-party API traffic
+ * - Handles Web Push + notification clicks
  */
-const CACHE = 'tta-shell-v1';
+const CACHE = 'tta-shell-v2';
 const PRECACHE = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -24,12 +24,32 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function isApiRequest(url) {
+  // Never cache backend / external APIs
+  if (url.hostname.includes('supabase.co')) return true;
+  if (url.hostname.includes('open-meteo.com')) return true;
+  if (url.hostname.includes('nominatim.openstreetmap.org')) return true;
+  if (url.pathname.startsWith('/auth/')) return true;
+  return false;
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  const url = new URL(req.url);
-  // Same-origin navigations: network-first, fallback to cache (SPA)
+  let url;
+  try {
+    url = new URL(req.url);
+  } catch {
+    return;
+  }
+
+  if (isApiRequest(url)) {
+    // Pass-through; do not intercept (avoids Failed to fetch / opaque cache issues)
+    return;
+  }
+
+  // Same-origin navigations: network-first, fallback to cached shell
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
@@ -43,18 +63,34 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: cache-first
-  if (url.origin === self.location.origin) {
+  if (url.origin !== self.location.origin) {
+    return; // let browser handle cross-origin (maps tiles, etc.)
+  }
+
+  // Hashed build assets & icons: stale-while-revalidate
+  const isStatic =
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.startsWith('/icons/') ||
+    url.pathname.startsWith('/pigeons/') ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css') ||
+    url.pathname.endsWith('.svg') ||
+    url.pathname.endsWith('.png') ||
+    url.pathname.endsWith('.webmanifest');
+
+  if (isStatic) {
     event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          if (res.ok && (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/pigeons/'))) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => undefined);
-          }
-          return res;
-        });
+      caches.open(CACHE).then(async (cache) => {
+        const cached = await cache.match(req);
+        const network = fetch(req)
+          .then((res) => {
+            if (res && res.ok) {
+              cache.put(req, res.clone()).catch(() => undefined);
+            }
+            return res;
+          })
+          .catch(() => cached);
+        return cached || network;
       })
     );
   }
@@ -76,7 +112,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-/** True background push — payload from Edge Function send-push. */
+/** Background push — payload from Edge Function send-push. */
 self.addEventListener('push', (event) => {
   let title = 'Tap Tap and Away';
   let body = 'You have a new update';

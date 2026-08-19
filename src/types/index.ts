@@ -30,6 +30,69 @@ export interface Profile {
   updated_at: string;
 }
 
+export type PigeonRarityKey =
+  | 'basic'
+  | 'common'
+  | 'epic'
+  | 'legendary'
+  | 'mythical'
+  | 'custom'
+  | string;
+
+export interface PigeonRarity {
+  key: string;
+  name: string;
+  description: string;
+  color: string;
+  icon: string;
+  ability_limit: number;
+  stat_potential: number;
+  is_enabled: boolean;
+  is_limited: boolean;
+  sort_order: number;
+}
+
+export interface PigeonAbilityDef {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  ability_type: string;
+  effect_key: string;
+  effect_values: number[];
+  max_level: number;
+  allowed_rarities: string[];
+  stackable: boolean;
+  applies_to_delivery: boolean;
+  applies_to_minigame: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface PigeonAbilityInstance {
+  id?: string;
+  ability_id: string;
+  key?: string;
+  name?: string;
+  description?: string;
+  ability_type?: string;
+  effect_key?: string;
+  effect_value?: number;
+  ability_level: number;
+  max_level?: number;
+  applies_to_delivery?: boolean;
+  applies_to_minigame?: boolean;
+}
+
+export interface PigeonStats {
+  speed: number;
+  stamina: number;
+  reliability: number;
+  accuracy: number;
+  endurance: number;
+  luck: number;
+}
+
 export interface Pigeon {
   id: string;
   owner_id: string;
@@ -41,12 +104,51 @@ export interface Pigeon {
   speed: number;
   stamina: number;
   reliability: number;
-  rarity: string;
+  accuracy: number;
+  endurance: number;
+  luck: number;
+  rarity: PigeonRarityKey;
+  level: number;
+  exp: number;
   is_active: boolean;
   total_distance_km?: number;
   total_flights?: number;
   successful_flights?: number;
   created_at: string;
+  updated_at?: string;
+}
+
+/** Payload from get_pigeon_public RPC */
+export interface PigeonPublicDetail {
+  id: string;
+  owner_id: string;
+  name: string;
+  gender: string | null;
+  sprite_id: string | null;
+  rarity: string;
+  rarity_meta: {
+    key: string;
+    name: string;
+    color: string;
+    icon: string;
+    ability_limit: number;
+    description: string;
+  } | null;
+  level: number;
+  exp: number;
+  exp_to_next: number;
+  stats: PigeonStats;
+  abilities: PigeonAbilityInstance[];
+  total_distance_km?: number;
+  total_flights?: number;
+  successful_flights?: number;
+}
+
+export interface PigeonDeliveryModifiers {
+  speed_factor: number;
+  failure_factor: number;
+  weather_penalty_factor: number;
+  long_distance_factor: number;
 }
 
 export interface Friendship {

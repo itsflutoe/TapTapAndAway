@@ -6,6 +6,8 @@ import PageHeader from '../components/PageHeader';
 import PigeonAvatar from '../components/PigeonAvatar';
 import type { Delivery } from '../types';
 import PigeonDetailModal from '../components/PigeonDetailModal';
+import HollowTreeDrawer from '../components/HollowTreeDrawer';
+import { listMyPigeons } from '../services/pigeon';
 import {
   disableBrowserNotifications,
   enableBrowserNotifications,
@@ -37,6 +39,8 @@ type SectionId = 'account' | 'notifications' | 'app' | 'history' | 'admin' | 'ab
 export default function ProfilePage() {
   const { user, profile, pigeon, signOut, refreshProfile, isAdminMode, setIsAdminMode } = useAuth();
   const [pigeonOpen, setPigeonOpen] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [birdCount, setBirdCount] = useState(0);
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
@@ -294,6 +298,33 @@ export default function ProfilePage() {
       </div>
 
       <div style={sectionStyle}>
+        <button
+          type="button"
+          style={sectionButtonStyle}
+          onClick={() => setTreeOpen(true)}
+        >
+          <span style={{ fontSize: 19 }} aria-hidden>
+            🌳
+          </span>
+          <span style={{ flex: 1 }}>
+            <strong>Hollow Tree</strong>
+            <span
+              style={{
+                display: 'block',
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                marginTop: 2,
+              }}
+            >
+              Your pigeon collection
+              {birdCount > 0 ? ` · ${birdCount} bird${birdCount === 1 ? '' : 's'}` : ''}
+            </span>
+          </span>
+          <ChevronRight size={18} />
+        </button>
+      </div>
+
+      <div style={sectionStyle}>
         <button type="button" style={sectionButtonStyle} onClick={() => toggle('history')}>
           <History size={19} />
           <span style={{ flex: 1 }}>
@@ -384,7 +415,20 @@ export default function ProfilePage() {
         pigeonId={pigeon?.id ?? null}
         onClose={() => setPigeonOpen(false)}
         title={pigeon?.name || 'Your pigeon'}
+        showEquip={false}
+        isActive={!!pigeon?.is_active}
+      />
+
+      <HollowTreeDrawer
+        open={treeOpen}
+        onClose={() => setTreeOpen(false)}
+        onActiveChanged={async () => {
+          await refreshProfile();
+          const list = await listMyPigeons().catch(() => []);
+          setBirdCount(list.length);
+        }}
       />
     </div>
   );
 }
+

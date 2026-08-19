@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import PigeonAvatar from './PigeonAvatar';
-import { expProgressRatio, getPigeonPublicDetail } from '../services/pigeon';
+import { expProgressRatio, getPigeonPublicDetail, setActivePigeon } from '../services/pigeon';
 import type { PigeonAbilityInstance, PigeonPublicDetail, PigeonStats } from '../types';
 
 interface Props {
@@ -8,6 +8,9 @@ interface Props {
   open: boolean;
   onClose: () => void;
   title?: string;
+  showEquip?: boolean;
+  isActive?: boolean;
+  onEquipped?: () => void | Promise<void>;
 }
 
 type StatKey = keyof PigeonStats;
@@ -26,15 +29,26 @@ function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
-export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Props) {
+export default function PigeonDetailModal({
+  pigeonId,
+  open,
+  onClose,
+  title,
+  showEquip = false,
+  isActive = false,
+  onEquipped,
+}: Props) {
   const [detail, setDetail] = useState<PigeonPublicDetail | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [equipping, setEquipping] = useState(false);
+  const [equipMsg, setEquipMsg] = useState('');
 
   useEffect(() => {
     if (!open || !pigeonId) {
       setDetail(null);
       setError('');
+      setEquipMsg('');
       return;
     }
     let cancelled = false;
@@ -68,6 +82,21 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
   const ratio = detail ? expProgressRatio(detail.exp, detail.exp_to_next) : 0;
   const abilities: PigeonAbilityInstance[] = detail?.abilities ?? [];
 
+  const equip = async () => {
+    if (!pigeonId || isActive) return;
+    setEquipping(true);
+    setEquipMsg('');
+    try {
+      await setActivePigeon(pigeonId);
+      setEquipMsg('This pigeon is now active.');
+      await onEquipped?.();
+    } catch (e) {
+      setEquipMsg(e instanceof Error ? e.message : 'Could not equip');
+    } finally {
+      setEquipping(false);
+    }
+  };
+
   return (
     <div
       role="dialog"
@@ -75,7 +104,7 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 90,
+        zIndex: 95,
         background: 'rgba(0,0,0,0.55)',
         display: 'flex',
         alignItems: 'flex-end',
@@ -130,7 +159,6 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
           style={{
             overflowY: 'auto',
             padding: '4px 16px',
-            /* clear bottom tab bar so Abilities is not clipped */
             paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))',
             WebkitOverflowScrolling: 'touch',
           }}
@@ -173,9 +201,38 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
                     }}
                   >
                     Level {detail.level}
+                    {isActive ? ' · Active' : ''}
                   </div>
                 </div>
               </div>
+
+              {showEquip && (
+                <div style={{ marginTop: 14 }}>
+                  {isActive ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: '100%' }}
+                      disabled
+                    >
+                      Active pigeon
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ width: '100%' }}
+                      disabled={equipping}
+                      onClick={() => void equip()}
+                    >
+                      {equipping ? 'Switching…' : 'Use this pigeon'}
+                    </button>
+                  )}
+                  {equipMsg && (
+                    <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>{equipMsg}</p>
+                  )}
+                </div>
+              )}
 
               <div style={{ marginTop: 16 }}>
                 <div

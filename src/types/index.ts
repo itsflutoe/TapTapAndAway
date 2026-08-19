@@ -24,6 +24,7 @@ export interface Profile {
   stamp_balance: number;
   is_banned: boolean;
   is_admin: boolean;
+  active_pigeon_id?: string | null;
   tutorial_completed: boolean;
   last_seen_at?: string | null;
   created_at: string;

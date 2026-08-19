@@ -11,7 +11,7 @@ In-app notification center + Realtime keep working as before.
 
 ## What this adds
 
-1. Table `push_subscriptions` + RPCs `save_push_subscription` / `delete_push_subscription`
+1. Table `push_subscriptions` + RPCs `upsert_push_subscription` / `delete_push_subscription`
 2. Client saves subscription to Supabase when user enables alerts
 3. Edge Function `send-push` that sends Web Push with the **private** key
 
@@ -21,7 +21,7 @@ In-app notification center + Realtime keep working as before.
 
 Supabase → **SQL Editor** → run:
 
-`supabase/migrations/015_push_subscriptions.sql`
+`supabase/migrations/015_server_delivery_push_settings.sql`
 
 ---
 

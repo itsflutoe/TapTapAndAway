@@ -10,6 +10,7 @@ import {
   applyTimeMultiplier,
   getWeatherForRoute,
 } from '../lib/geo';
+import { getPigeonDeliveryModifiers } from './pigeon';
 import type { Message, Delivery, Profile } from '../types';
 
 export interface EventEffects {
@@ -204,8 +205,23 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
 
   // Prefer system setting; pigeon.speed is a relative stat (not mph).
   const baseSpeed = await fetchPigeonBaseSpeedMph(100);
-  const modifiedSpeed = baseSpeed * weather.multiplier * (effects.speed_multiplier || 1);
-  const realSeconds = calculateFlightSeconds(distanceKm, modifiedSpeed);
+  const pigeonMods = await getPigeonDeliveryModifiers(pigeonId);
+  // Soft pigeon influence: never fully replaces weather / admin base speed
+  let weatherMult = weather.multiplier;
+  if (weatherMult < 1) {
+    const penalty = 1 - weatherMult;
+    weatherMult = 1 - penalty * pigeonMods.weather_penalty_factor;
+  }
+  let distanceFactor = 1;
+  if (distanceKm > 50) {
+    distanceFactor = 1 + Math.min(0.25, (distanceKm - 50) / 500);
+    distanceFactor = 1 + (distanceFactor - 1) * pigeonMods.long_distance_factor;
+  }
+  const modifiedSpeed =
+    baseSpeed * weatherMult * (effects.speed_multiplier || 1) * pigeonMods.speed_factor;
+  const realSeconds = Math.round(
+    calculateFlightSeconds(distanceKm, modifiedSpeed) * distanceFactor
+  );
 
   // Prefer live admin setting; fall back to param only if RPC unavailable
   let multiplier = timeMultiplier;

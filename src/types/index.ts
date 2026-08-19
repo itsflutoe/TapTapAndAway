@@ -124,7 +124,14 @@ export interface SystemSettings {
   daily_stamp_reward: number;
   signup_stamp_bonus: number;
   weather_modifiers: Record<string, number>;
+  /** @deprecated use km_per_stamp */
   stamp_cost_per_70km: number;
+  km_per_stamp: number;
+  min_stamp_cost: number;
+  rate_limit_max: number;
+  rate_limit_window_seconds: number;
+  min_delivery_seconds: number;
+  max_delivery_seconds: number;
 }
 
 export interface GeocodeResult {

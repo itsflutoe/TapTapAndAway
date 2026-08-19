@@ -97,33 +97,31 @@ export default function AdminHollowFlightPanel({ flash }: Props) {
     void load();
   }, [load]);
 
+  const parseValue = (rawIn: string): unknown => {
+    const raw = String(rawIn ?? '').trim();
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    if (raw !== '' && /^-?\d+(\.\d+)?$/.test(raw) && !Number.isNaN(Number(raw))) {
+      return Number(raw);
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
+      // Must use admin_set_setting RPC — direct upsert on system_settings is blocked by RLS (403).
       for (const { key } of HF_KEYS) {
         if (!(key in settings)) continue;
-        let value: unknown = settings[key];
-        const raw = String(settings[key] ?? '').trim();
-        if (raw === 'true' || raw === 'false') {
-          value = raw === 'true';
-        } else if (raw !== '' && !Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw)) {
-          value = Number(raw);
-        } else if (
-          (raw.startsWith('"') && raw.endsWith('"')) ||
-          (raw.startsWith('{') || raw.startsWith('['))
-        ) {
-          try {
-            value = JSON.parse(raw);
-          } catch {
-            value = raw;
-          }
-        } else {
-          // store strings as JSON strings for consistency with quoted defaults
-          value = raw;
-        }
-        const { error } = await supabase
-          .from('system_settings')
-          .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        const value = parseValue(String(settings[key] ?? ''));
+        const { error } = await supabase.rpc('admin_set_setting', {
+          p_key: key,
+          p_value: value,
+        });
         if (error) throw error;
       }
       flash('Hollow Flight settings saved');

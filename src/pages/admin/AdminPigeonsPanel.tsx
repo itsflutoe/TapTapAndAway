@@ -81,9 +81,27 @@ export default function AdminPigeonsPanel({ flash }: Props) {
     key: '', name: '', description: '', color: '#94a3b8', icon: '🐦', ability_limit: 0, stat_potential: 100,
   });
   const [abilityForm, setAbilityForm] = useState({
-    id: '', key: '', name: '', description: '', ability_type: 'delivery', effect_key: 'delivery_speed_pct',
-    effect_values: '5,8,12', max_level: 3, allowed_rarities: 'epic,legendary,mythical,custom',
-    applies_to_delivery: true, applies_to_minigame: false, is_active: true,
+    id: '',
+    key: '',
+    name: '',
+    description: '',
+    ability_type: 'delivery',
+    effect_key: 'delivery_speed_pct',
+    effect_lv1: 5,
+    effect_lv2: 8,
+    effect_lv3: 12,
+    max_level: 3,
+    rarities: {
+      epic: true,
+      legendary: true,
+      mythical: true,
+      custom: true,
+      basic: false,
+      common: false,
+    } as Record<string, boolean>,
+    applies_to_delivery: true,
+    applies_to_minigame: false,
+    is_active: true,
   });
 
   const loadSettings = useCallback(async () => {
@@ -148,20 +166,34 @@ export default function AdminPigeonsPanel({ flash }: Props) {
 
   const saveAbility = async () => {
     try {
-      const values = abilityForm.effect_values.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+      const values = [abilityForm.effect_lv1, abilityForm.effect_lv2, abilityForm.effect_lv3]
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n));
+      const allowed = Object.entries(abilityForm.rarities)
+        .filter(([, on]) => on)
+        .map(([k]) => k);
       await adminUpsertAbilityDef({
         id: abilityForm.id || undefined,
-        key: abilityForm.key, name: abilityForm.name, description: abilityForm.description,
-        ability_type: abilityForm.ability_type, effect_key: abilityForm.effect_key,
+        key: abilityForm.key,
+        name: abilityForm.name,
+        description: abilityForm.description,
+        ability_type: abilityForm.ability_type,
+        effect_key: abilityForm.effect_key,
         effect_values: values.length ? values : [5, 8, 12],
         max_level: Number(abilityForm.max_level) || 3,
-        allowed_rarities: abilityForm.allowed_rarities.split(',').map((s) => s.trim()).filter(Boolean),
+        allowed_rarities: allowed.length ? allowed : ['epic', 'legendary', 'mythical', 'custom'],
         applies_to_delivery: abilityForm.applies_to_delivery,
         applies_to_minigame: abilityForm.applies_to_minigame,
         is_active: abilityForm.is_active,
       });
       flash('Ability saved');
-      setAbilityForm((f) => ({ ...f, id: '', key: '', name: '', description: '' }));
+      setAbilityForm((f) => ({
+        ...f,
+        id: '',
+        key: '',
+        name: '',
+        description: '',
+      }));
       void loadCatalogs();
     } catch (e) {
       flash(e instanceof Error ? e.message : 'Save failed', true);
@@ -276,20 +308,119 @@ export default function AdminPigeonsPanel({ flash }: Props) {
         <>
           <div style={card}>
             <h2 style={{ fontSize: 14, marginTop: 0 }}>Create / edit ability</h2>
-            {(['key', 'name', 'description', 'ability_type', 'effect_key', 'effect_values', 'allowed_rarities'] as const).map((f) => (
+            <p style={{ fontSize: 11, color: '#64748b', marginTop: 0 }}>
+              Use plain fields only — no JSON. Effect values are per ability level.
+            </p>
+            {(['key', 'name', 'description', 'ability_type', 'effect_key'] as const).map((f) => (
               <div key={f} style={{ marginBottom: 8 }}>
                 <label style={{ fontSize: 12, color: '#a0a8b8' }}>{f}</label>
-                <input style={inputStyle} value={String(abilityForm[f])} onChange={(e) => setAbilityForm({ ...abilityForm, [f]: e.target.value })} />
+                <input
+                  style={inputStyle}
+                  value={String(abilityForm[f])}
+                  onChange={(e) => setAbilityForm({ ...abilityForm, [f]: e.target.value })}
+                />
               </div>
             ))}
-            <div style={{ marginBottom: 8 }}>
-              <label style={{ fontSize: 12, color: '#a0a8b8' }}>max_level</label>
-              <input style={inputStyle} type="number" value={abilityForm.max_level} onChange={(e) => setAbilityForm({ ...abilityForm, max_level: Number(e.target.value) })} />
+            <div style={{ fontSize: 12, color: '#a0a8b8', marginBottom: 4 }}>Effect by level</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <label style={{ fontSize: 11, color: '#a0a8b8' }}>
+                Level 1
+                <input
+                  style={inputStyle}
+                  type="number"
+                  value={abilityForm.effect_lv1}
+                  onChange={(e) =>
+                    setAbilityForm({ ...abilityForm, effect_lv1: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label style={{ fontSize: 11, color: '#a0a8b8' }}>
+                Level 2
+                <input
+                  style={inputStyle}
+                  type="number"
+                  value={abilityForm.effect_lv2}
+                  onChange={(e) =>
+                    setAbilityForm({ ...abilityForm, effect_lv2: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label style={{ fontSize: 11, color: '#a0a8b8' }}>
+                Level 3
+                <input
+                  style={inputStyle}
+                  type="number"
+                  value={abilityForm.effect_lv3}
+                  onChange={(e) =>
+                    setAbilityForm({ ...abilityForm, effect_lv3: Number(e.target.value) })
+                  }
+                />
+              </label>
             </div>
-            <label style={{ fontSize: 12, display: 'block' }}><input type="checkbox" checked={abilityForm.applies_to_delivery} onChange={(e) => setAbilityForm({ ...abilityForm, applies_to_delivery: e.target.checked })} /> Delivery</label>
-            <label style={{ fontSize: 12, display: 'block' }}><input type="checkbox" checked={abilityForm.applies_to_minigame} onChange={(e) => setAbilityForm({ ...abilityForm, applies_to_minigame: e.target.checked })} /> Mini-game</label>
-            <label style={{ fontSize: 12, display: 'block' }}><input type="checkbox" checked={abilityForm.is_active} onChange={(e) => setAbilityForm({ ...abilityForm, is_active: e.target.checked })} /> Active</label>
-            <button type="button" style={{ ...btnPrimary, marginTop: 10 }} onClick={() => void saveAbility()}>Save ability</button>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 12, color: '#a0a8b8' }}>Max ability level</label>
+              <input
+                style={inputStyle}
+                type="number"
+                value={abilityForm.max_level}
+                onChange={(e) =>
+                  setAbilityForm({ ...abilityForm, max_level: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div style={{ fontSize: 12, color: '#a0a8b8', marginBottom: 4 }}>Allowed rarities</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+              {(['basic', 'common', 'epic', 'legendary', 'mythical', 'custom'] as const).map((r) => (
+                <label key={r} style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!abilityForm.rarities[r]}
+                    onChange={(e) =>
+                      setAbilityForm({
+                        ...abilityForm,
+                        rarities: { ...abilityForm.rarities, [r]: e.target.checked },
+                      })
+                    }
+                  />{' '}
+                  {r}
+                </label>
+              ))}
+            </div>
+            <label style={{ fontSize: 12, display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={abilityForm.applies_to_delivery}
+                onChange={(e) =>
+                  setAbilityForm({ ...abilityForm, applies_to_delivery: e.target.checked })
+                }
+              />{' '}
+              Applies to delivery
+            </label>
+            <label style={{ fontSize: 12, display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={abilityForm.applies_to_minigame}
+                onChange={(e) =>
+                  setAbilityForm({ ...abilityForm, applies_to_minigame: e.target.checked })
+                }
+              />{' '}
+              Applies to mini-games
+            </label>
+            <label style={{ fontSize: 12, display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={abilityForm.is_active}
+                onChange={(e) => setAbilityForm({ ...abilityForm, is_active: e.target.checked })}
+              />{' '}
+              Active
+            </label>
+            <button
+              type="button"
+              style={{ ...btnPrimary, marginTop: 10 }}
+              onClick={() => void saveAbility()}
+            >
+              Save ability
+            </button>
           </div>
           {abilities.map((a) => (
             <div key={a.id} style={card}>
@@ -298,12 +429,39 @@ export default function AdminPigeonsPanel({ flash }: Props) {
                   <strong>{a.name}</strong> <span style={{ color: '#64748b', fontSize: 12 }}>({a.key})</span>
                   <div style={{ fontSize: 12, color: '#a0a8b8' }}>{a.description}</div>
                 </div>
-                <button type="button" style={btn} onClick={() => setAbilityForm({
-                  id: a.id, key: a.key, name: a.name, description: a.description, ability_type: a.ability_type,
-                  effect_key: a.effect_key, effect_values: (a.effect_values || []).join(','), max_level: a.max_level,
-                  allowed_rarities: (a.allowed_rarities || []).join(','), applies_to_delivery: a.applies_to_delivery,
-                  applies_to_minigame: a.applies_to_minigame, is_active: a.is_active,
-                })}>Edit</button>
+                <button
+                  type="button"
+                  style={btn}
+                  onClick={() => {
+                    const vals = a.effect_values || [];
+                    const allowed = new Set(a.allowed_rarities || []);
+                    setAbilityForm({
+                      id: a.id,
+                      key: a.key,
+                      name: a.name,
+                      description: a.description,
+                      ability_type: a.ability_type,
+                      effect_key: a.effect_key,
+                      effect_lv1: Number(vals[0] ?? 5),
+                      effect_lv2: Number(vals[1] ?? 8),
+                      effect_lv3: Number(vals[2] ?? 12),
+                      max_level: a.max_level,
+                      rarities: {
+                        basic: allowed.has('basic'),
+                        common: allowed.has('common'),
+                        epic: allowed.has('epic'),
+                        legendary: allowed.has('legendary'),
+                        mythical: allowed.has('mythical'),
+                        custom: allowed.has('custom'),
+                      },
+                      applies_to_delivery: a.applies_to_delivery,
+                      applies_to_minigame: a.applies_to_minigame,
+                      is_active: a.is_active,
+                    });
+                  }}
+                >
+                  Edit
+                </button>
               </div>
             </div>
           ))}
@@ -325,12 +483,36 @@ export default function AdminPigeonsPanel({ flash }: Props) {
           {selected && (
             <div style={card}>
               <h2 style={{ fontSize: 14, marginTop: 0 }}>Edit: {selected.name}</h2>
-              {(['name', 'rarity', 'sprite_id'] as const).map((f) => (
-                <div key={f} style={{ marginBottom: 8 }}>
-                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>{f}</label>
-                  <input style={inputStyle} value={String(selected[f] ?? '')} onChange={(e) => setSelected({ ...selected, [f]: e.target.value })} />
-                </div>
-              ))}
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>name</label>
+                <input
+                  style={inputStyle}
+                  value={selected.name}
+                  onChange={(e) => setSelected({ ...selected, name: e.target.value })}
+                />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>rarity</label>
+                <select
+                  style={inputStyle}
+                  value={selected.rarity}
+                  onChange={(e) => setSelected({ ...selected, rarity: e.target.value })}
+                >
+                  {['basic', 'common', 'epic', 'legendary', 'mythical', 'custom'].map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: '#a0a8b8' }}>sprite_id</label>
+                <input
+                  style={inputStyle}
+                  value={String(selected.sprite_id ?? '')}
+                  onChange={(e) => setSelected({ ...selected, sprite_id: e.target.value })}
+                />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <div>
                   <label style={{ fontSize: 12, color: '#a0a8b8' }}>level</label>

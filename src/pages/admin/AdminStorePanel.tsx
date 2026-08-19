@@ -15,6 +15,7 @@ export interface StoreItemRow {
   is_active: boolean;
   is_featured: boolean;
   sort_order: number;
+  randomize_stats?: boolean;
 }
 
 const card: React.CSSProperties = {
@@ -45,24 +46,40 @@ const btn: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = { ...btn, background: '#3b82f6', borderColor: '#3b82f6' };
 const btnDanger: React.CSSProperties = { ...btn, background: '#7f1d1d', borderColor: '#7f1d1d' };
 
+const RARITY_OPTIONS = ['basic', 'common', 'epic', 'legendary', 'mythical', 'custom'];
+
 const emptyForm = {
   id: '' as string,
   sku: '',
   name: '',
   description: '',
   item_type: 'item',
-  bird_rarity: '',
+  bird_rarity: 'epic',
   bird_sprite_id: '',
-  bird_stat_template: '',
-  price_stamps: 0,
-  stock: '' as string | number,
+  price_stamps: 10,
+  stock: '5' as string,
   is_active: true,
   is_featured: false,
   sort_order: 0,
+  // optional preset stats for bird stock (simple numbers, not JSON)
+  randomize_stats: true,
+  use_stats: false,
+  speed: 100,
+  stamina: 50,
+  reliability: 95,
+  accuracy: 50,
+  endurance: 50,
+  luck: 50,
 };
 
 interface Props {
   flash: (msg: string, isError?: boolean) => void;
+}
+
+function numFromTemplate(t: Record<string, unknown> | null | undefined, key: string, fallback: number): number {
+  if (!t || t[key] == null) return fallback;
+  const n = Number(t[key]);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 export default function AdminStorePanel({ flash }: Props) {
@@ -88,19 +105,26 @@ export default function AdminStorePanel({ flash }: Props) {
   }, [load]);
 
   const save = async () => {
-    let template: unknown = null;
-    if (form.bird_stat_template.trim()) {
-      try {
-        template = JSON.parse(form.bird_stat_template);
-      } catch {
-        flash('bird_stat_template must be valid JSON or empty', true);
-        return;
-      }
+    if (!form.sku.trim() || !form.name.trim()) {
+      flash('SKU and name are required', true);
+      return;
     }
     const stockVal =
       form.stock === '' || form.stock === null || form.stock === undefined
         ? null
         : Number(form.stock);
+
+    let template: Record<string, number> | null = null;
+    if (form.item_type === 'bird' && form.use_stats && !form.randomize_stats) {
+      template = {
+        speed: Number(form.speed) || 0,
+        stamina: Number(form.stamina) || 0,
+        reliability: Number(form.reliability) || 0,
+        accuracy: Number(form.accuracy) || 0,
+        endurance: Number(form.endurance) || 0,
+        luck: Number(form.luck) || 0,
+      };
+    }
 
     const { data, error } = await supabase.rpc('admin_upsert_store_item', {
       p_id: form.id || null,
@@ -108,23 +132,25 @@ export default function AdminStorePanel({ flash }: Props) {
       p_name: form.name,
       p_description: form.description,
       p_item_type: form.item_type,
-      p_bird_rarity: form.bird_rarity || null,
-      p_bird_sprite_id: form.bird_sprite_id || null,
+      p_bird_rarity: form.item_type === 'bird' ? form.bird_rarity || null : null,
+      p_bird_sprite_id: form.item_type === 'bird' ? form.bird_sprite_id || null : null,
       p_bird_stat_template: template,
       p_price_stamps: Number(form.price_stamps) || 0,
-      p_stock: stockVal,
+      p_stock: Number.isFinite(stockVal as number) ? stockVal : null,
       p_is_active: form.is_active,
       p_is_featured: form.is_featured,
       p_sort_order: Number(form.sort_order) || 0,
       p_metadata: {},
+      p_randomize_stats: form.item_type === 'bird' ? form.randomize_stats : false,
     });
     if (error) {
       flash(error.message, true);
       return;
     }
-    flash(form.id ? 'Item updated' : `Item created (${data})`);
+    flash(form.id ? 'Item updated' : `Item created`);
     setForm(emptyForm);
     void load();
+    void data;
   };
 
   const adjustStock = async (id: string, delta: number) => {
@@ -149,21 +175,66 @@ export default function AdminStorePanel({ flash }: Props) {
     }
   };
 
-  const visible = items.filter((i) => filter === 'all' || i.item_type === filter || (filter === 'item' && i.item_type !== 'bird'));
+  const loadIntoForm = (it: StoreItemRow) => {
+    const t = it.bird_stat_template;
+    const hasStats = !!(t && typeof t === 'object' && Object.keys(t).length > 0);
+    setForm({
+      id: it.id,
+      sku: it.sku,
+      name: it.name,
+      description: it.description,
+      item_type: it.item_type,
+      bird_rarity: it.bird_rarity || 'epic',
+      bird_sprite_id: it.bird_sprite_id || '',
+      price_stamps: it.price_stamps,
+      stock: it.stock === null || it.stock === undefined ? '' : String(it.stock),
+      is_active: it.is_active,
+      is_featured: it.is_featured,
+      sort_order: it.sort_order,
+      randomize_stats: !!(it as StoreItemRow & { randomize_stats?: boolean }).randomize_stats,
+      use_stats: hasStats && !(it as StoreItemRow & { randomize_stats?: boolean }).randomize_stats,
+      speed: numFromTemplate(t, 'speed', 100),
+      stamina: numFromTemplate(t, 'stamina', 50),
+      reliability: numFromTemplate(t, 'reliability', 95),
+      accuracy: numFromTemplate(t, 'accuracy', 50),
+      endurance: numFromTemplate(t, 'endurance', 50),
+      luck: numFromTemplate(t, 'luck', 50),
+    });
+  };
+
+  const visible = items.filter(
+    (i) =>
+      filter === 'all' ||
+      i.item_type === filter ||
+      (filter === 'item' && i.item_type !== 'bird')
+  );
 
   return (
     <div>
       <h1 style={{ fontSize: 22, marginBottom: 8 }}>Store stock</h1>
       <p style={{ fontSize: 12, color: '#a0a8b8', marginBottom: 12 }}>
-        Prepare catalog items and bird stock for the player Store. Purchase checkout can be wired
-        later; this panel manages inventory and pricing now.
+        Add items or birds with simple fields. No JSON required. Purchase checkout can be wired later.
       </p>
 
       <div style={card}>
         <h2 style={{ fontSize: 14, marginTop: 0 }}>{form.id ? 'Edit item' : 'Add item / bird'}</h2>
         <div style={{ display: 'grid', gap: 8 }}>
           <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-            SKU
+            Type
+            <select
+              style={inputStyle}
+              value={form.item_type}
+              onChange={(e) => setForm({ ...form, item_type: e.target.value })}
+            >
+              <option value="item">Item</option>
+              <option value="bird">Bird</option>
+              <option value="cosmetic">Cosmetic</option>
+              <option value="consumable">Consumable</option>
+              <option value="bundle">Bundle</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: '#a0a8b8' }}>
+            SKU (unique code)
             <input
               style={inputStyle}
               value={form.sku}
@@ -177,6 +248,7 @@ export default function AdminStorePanel({ flash }: Props) {
               style={inputStyle}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Swift Epic Pigeon"
             />
           </label>
           <label style={{ fontSize: 12, color: '#a0a8b8' }}>
@@ -187,32 +259,33 @@ export default function AdminStorePanel({ flash }: Props) {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </label>
-          <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-            Type
-            <select
-              style={inputStyle}
-              value={form.item_type}
-              onChange={(e) => setForm({ ...form, item_type: e.target.value })}
-            >
-              <option value="item">item</option>
-              <option value="bird">bird</option>
-              <option value="cosmetic">cosmetic</option>
-              <option value="consumable">consumable</option>
-              <option value="bundle">bundle</option>
-            </select>
-          </label>
+
           {form.item_type === 'bird' && (
-            <>
-              <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-                Bird rarity (e.g. epic, legendary)
-                <input
+            <div
+              style={{
+                border: '1px solid #2a2f3a',
+                borderRadius: 10,
+                padding: 10,
+                background: '#12161e',
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Bird options</div>
+              <label style={{ fontSize: 12, color: '#a0a8b8', display: 'block', marginBottom: 8 }}>
+                Rarity
+                <select
                   style={inputStyle}
                   value={form.bird_rarity}
                   onChange={(e) => setForm({ ...form, bird_rarity: e.target.value })}
-                />
+                >
+                  {RARITY_OPTIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-                Bird sprite_id (optional)
+              <label style={{ fontSize: 12, color: '#a0a8b8', display: 'block', marginBottom: 8 }}>
+                Sprite id (optional)
                 <input
                   style={inputStyle}
                   value={form.bird_sprite_id}
@@ -220,17 +293,63 @@ export default function AdminStorePanel({ flash }: Props) {
                   placeholder="basic-07"
                 />
               </label>
-              <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-                Bird stat template JSON (optional)
+              <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                 <input
-                  style={inputStyle}
-                  value={form.bird_stat_template}
-                  onChange={(e) => setForm({ ...form, bird_stat_template: e.target.value })}
-                  placeholder='{"speed":100,"stamina":60}'
-                />
+                  type="checkbox"
+                  checked={form.randomize_stats}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      randomize_stats: e.target.checked,
+                      use_stats: e.target.checked ? false : form.use_stats,
+                    })
+                  }
+                />{' '}
+                Randomize stats on purchase (ranges by rarity tier)
               </label>
-            </>
+              {form.randomize_stats && (
+                <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 8px' }}>
+                  Each buy rolls stats for this rarity (Basic → Mythical). No fixed numbers needed.
+                </p>
+              )}
+              <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.use_stats}
+                  disabled={form.randomize_stats}
+                  onChange={(e) => setForm({ ...form, use_stats: e.target.checked })}
+                />{' '}
+                Use fixed preset stats instead
+              </label>
+              {form.use_stats && !form.randomize_stats && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {(
+                    [
+                      ['speed', 'speed'],
+                      ['stamina', 'stamina'],
+                      ['reliability', 'reliability'],
+                      ['accuracy', 'accuracy'],
+                      ['endurance', 'endurance'],
+                      ['luck', 'luck'],
+                    ] as const
+                  ).map(([label, key]) => (
+                    <label key={key} style={{ fontSize: 12, color: '#a0a8b8' }}>
+                      {label}
+                      <input
+                        style={inputStyle}
+                        type="number"
+                        value={form[key]}
+                        onChange={(e) =>
+                          setForm({ ...form, [key]: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
             <label style={{ fontSize: 12, color: '#a0a8b8' }}>
               Price (stamps)
@@ -242,7 +361,7 @@ export default function AdminStorePanel({ flash }: Props) {
               />
             </label>
             <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-              Stock (empty = unlimited)
+              Stock (blank = ∞)
               <input
                 style={inputStyle}
                 value={form.stock}
@@ -251,7 +370,7 @@ export default function AdminStorePanel({ flash }: Props) {
               />
             </label>
             <label style={{ fontSize: 12, color: '#a0a8b8' }}>
-              Sort
+              Sort order
               <input
                 style={inputStyle}
                 type="number"
@@ -266,7 +385,7 @@ export default function AdminStorePanel({ flash }: Props) {
               checked={form.is_active}
               onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
             />{' '}
-            Active
+            Active (visible in store)
           </label>
           <label style={{ fontSize: 12 }}>
             <input
@@ -282,14 +401,14 @@ export default function AdminStorePanel({ flash }: Props) {
             </button>
             {form.id && (
               <button type="button" style={btn} onClick={() => setForm(emptyForm)}>
-                Cancel edit
+                Cancel
               </button>
             )}
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         {(['all', 'bird', 'item'] as const).map((f) => (
           <button
             key={f}
@@ -326,34 +445,12 @@ export default function AdminStorePanel({ flash }: Props) {
               <div style={{ fontSize: 12, marginTop: 4 }}>
                 🪙 {it.price_stamps} · Stock:{' '}
                 {it.stock === null || it.stock === undefined ? '∞' : it.stock}
-                {it.bird_rarity ? ` · rarity ${it.bird_rarity}` : ''}
-                {it.bird_sprite_id ? ` · ${it.bird_sprite_id}` : ''}
+                {it.bird_rarity ? ` · ${it.bird_rarity}` : ''}
+                {it.randomize_stats ? ' · random stats' : ''}
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <button
-                type="button"
-                style={btn}
-                onClick={() =>
-                  setForm({
-                    id: it.id,
-                    sku: it.sku,
-                    name: it.name,
-                    description: it.description,
-                    item_type: it.item_type,
-                    bird_rarity: it.bird_rarity || '',
-                    bird_sprite_id: it.bird_sprite_id || '',
-                    bird_stat_template: it.bird_stat_template
-                      ? JSON.stringify(it.bird_stat_template)
-                      : '',
-                    price_stamps: it.price_stamps,
-                    stock: it.stock === null || it.stock === undefined ? '' : it.stock,
-                    is_active: it.is_active,
-                    is_featured: it.is_featured,
-                    sort_order: it.sort_order,
-                  })
-                }
-              >
+              <button type="button" style={btn} onClick={() => loadIntoForm(it)}>
                 Edit
               </button>
               {it.stock !== null && it.stock !== undefined && (

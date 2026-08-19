@@ -77,7 +77,20 @@ export async function getPigeonDeliveryModifiers(
   };
 }
 
+export async function listMyPigeons(): Promise<Pigeon[]> {
+  const { data, error } = await supabase.rpc('list_my_pigeons');
+  if (error) throw new Error(error.message);
+  if (!data) return [];
+  return (Array.isArray(data) ? data : []) as Pigeon[];
+}
+
+export async function setActivePigeon(pigeonId: string): Promise<void> {
+  const { error } = await supabase.rpc('set_active_pigeon', { p_pigeon_id: pigeonId });
+  if (error) throw new Error(error.message);
+}
+
 export async function fetchActivePigeonForUser(userId: string): Promise<Pigeon | null> {
+
   const { data } = await supabase
     .from('pigeons')
     .select('*')

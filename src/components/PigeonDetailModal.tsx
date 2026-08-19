@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import PigeonAvatar from './PigeonAvatar';
 import { expProgressRatio, getPigeonPublicDetail } from '../services/pigeon';
-import type { PigeonPublicDetail } from '../types';
+import type { PigeonAbilityInstance, PigeonPublicDetail, PigeonStats } from '../types';
 
 interface Props {
   pigeonId: string | null;
@@ -10,7 +10,9 @@ interface Props {
   title?: string;
 }
 
-const STAT_ORDER: { key: keyof PigeonPublicDetail['stats']; label: string }[] = [
+type StatKey = keyof PigeonStats;
+
+const STAT_ORDER: { key: StatKey; label: string }[] = [
   { key: 'speed', label: 'Speed' },
   { key: 'stamina', label: 'Stamina' },
   { key: 'reliability', label: 'Reliability' },
@@ -41,7 +43,9 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
           if (!d) setError('Pigeon not found.');
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load pigeon.');
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to load pigeon.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -177,9 +181,9 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
 
             <h3 style={{ fontSize: 14, margin: '18px 0 8px' }}>Stats</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {STAT_ORDER.map(({ key, label }) => (
+              {STAT_ORDER.map((row) => (
                 <div
-                  key={key}
+                  key={row.key}
                   style={{
                     background: '#12161e',
                     border: '1px solid #2a2f3a',
@@ -187,9 +191,9 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
                     padding: '8px 10px',
                   }}
                 >
-                  <div style={{ fontSize: 11, color: '#94a3b8' }}>{label}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8' }}>{row.label}</div>
                   <div style={{ fontSize: 16, fontWeight: 700 }}>
-                    {Math.round(Number(detail.stats[key]) || 0)}
+                    {Math.round(Number(detail.stats[row.key]) || 0)}
                   </div>
                 </div>
               ))}
@@ -201,9 +205,9 @@ export default function PigeonDetailModal({ pigeonId, open, onClose, title }: Pr
                 No abilities (Basic &amp; Common never equip abilities).
               </p>
             )}
-            {detail.abilities?.map((ab) => (
+            {detail.abilities.map((ab: PigeonAbilityInstance) => (
               <div
-                key={ab.ability_id + String(ab.ability_level)}
+                key={`${ab.ability_id}-${ab.ability_level}`}
                 style={{
                   border: '1px solid #2a2f3a',
                   borderRadius: 10,

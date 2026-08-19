@@ -3,6 +3,9 @@ import {
   haversineKm,
   calculateStampCost,
   fetchKmPerStamp,
+  fetchMinStampCost,
+  fetchPigeonBaseSpeedMph,
+  fetchRateLimitConfig,
   calculateFlightSeconds,
   applyTimeMultiplier,
   getWeatherForRoute,
@@ -157,17 +160,20 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
 
   // Active events: free_sends, stamp_multiplier, speed_multiplier
   const effects = await getEventEffects();
-  const kmPerStamp = await fetchKmPerStamp(async (key) => {
-    const { data } = await supabase.from('system_settings').select('value').eq('key', key).maybeSingle();
-    if (data?.value == null) return null;
-    return typeof data.value === 'string' ? data.value : JSON.stringify(data.value);
-  });
-  let stampCost = calculateStampCost(distanceKm, kmPerStamp);
+  const [kmPerStamp, minStampCost] = await Promise.all([
+    fetchKmPerStamp(async (key) => {
+      const { data } = await supabase.from('system_settings').select('value').eq('key', key).maybeSingle();
+      if (data?.value == null) return null;
+      return typeof data.value === 'string' ? data.value : JSON.stringify(data.value);
+    }),
+    fetchMinStampCost(),
+  ]);
+  let stampCost = calculateStampCost(distanceKm, kmPerStamp, minStampCost);
   if (effects.free_sends) {
     stampCost = 0;
   } else if (effects.stamp_multiplier > 1) {
-    // Higher multiplier = cheaper sends (e.g. 2 → half cost, min 1)
-    stampCost = Math.max(1, Math.ceil(stampCost / effects.stamp_multiplier));
+    // Higher multiplier = cheaper sends (e.g. 2 → half cost, keep min floor)
+    stampCost = Math.max(minStampCost, Math.ceil(stampCost / effects.stamp_multiplier));
   }
 
   if (stampCost > 0 && senderProfile.stamp_balance < stampCost) {
@@ -196,7 +202,8 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
     receiverProfile.longitude
   );
 
-  const baseSpeed = 100;
+  // Prefer system setting; pigeon.speed is a relative stat (not mph).
+  const baseSpeed = await fetchPigeonBaseSpeedMph(100);
   const modifiedSpeed = baseSpeed * weather.multiplier * (effects.speed_multiplier || 1);
   const realSeconds = calculateFlightSeconds(distanceKm, modifiedSpeed);
 
@@ -211,11 +218,12 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
 
   const estimatedSeconds = applyTimeMultiplier(realSeconds, multiplier);
 
-  // Anti-spam: max 5 messages / 60s (skip check if RPC not deployed yet)
+  // Anti-spam from system_settings (skip check if RPC not deployed yet)
+  const rateCfg = await fetchRateLimitConfig();
   const { data: canSend, error: rateErr } = await supabase.rpc('can_send_message', {
     p_user_id: senderId,
-    p_max: 5,
-    p_window_seconds: 60,
+    p_max: rateCfg.max,
+    p_window_seconds: rateCfg.windowSeconds,
   });
   if (!rateErr && canSend === false) {
     throw new Error('You are sending too fast. Please wait a moment before sending another pigeon.');
@@ -299,26 +307,42 @@ export async function sendPigeonMessage(params: SendMessageParams): Promise<{
   };
 }
 
-/** Best-effort progress write for Conversation/Admin UI. Non-fatal if blocked. */
+/** Best-effort progress write for Conversation/Admin UI. Prefers server RPC. */
 export async function updateDeliveryProgress(
   deliveryId: string,
   progressPercent: number
 ): Promise<void> {
   const pct = Math.max(0, Math.min(100, Math.round(progressPercent)));
-  await supabase
-    .from('deliveries')
-    .update({ progress_percent: pct, status: 'FLYING' })
-    .eq('id', deliveryId)
-    .in('status', ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED']);
+  const { error } = await supabase.rpc('update_delivery_progress', {
+    p_delivery_id: deliveryId,
+    p_progress: pct,
+  });
+  if (error) {
+    // Fallback for environments without migration 015 yet
+    await supabase
+      .from('deliveries')
+      .update({ progress_percent: pct, status: 'FLYING' })
+      .eq('id', deliveryId)
+      .in('status', ['DRAFT', 'PREPARING', 'DISPATCHED', 'FLYING', 'ARRIVED']);
+  }
 }
 
 /**
  * Complete active deliveries past ETA for this user so flights resolve
  * even if nobody has the Delivery map page open.
+ * Prefers server-side batch RPC (authoritative failure roll + refunds).
  */
 export async function resolveOverdueDeliveriesForUser(userId: string): Promise<number> {
   if (!userId) return 0;
 
+  const { data: rpcCount, error: rpcErr } = await supabase.rpc(
+    'resolve_overdue_deliveries_for_user'
+  );
+  if (!rpcErr && typeof rpcCount === 'number') {
+    return rpcCount;
+  }
+
+  // Fallback: client-driven completion via resolve_delivery / completeDelivery
   const { data: msgs } = await supabase
     .from('messages')
     .select('id, receiver_id')
@@ -371,21 +395,46 @@ export interface CompleteDeliveryResult {
 /**
  * Resolves a delivery to DELIVERED or FAILED.
  *
- * Idempotent by design: this can be called more than once for the same
- * delivery (e.g. the sender's and receiver's tabs both reach the end of
- * the flight, or a client retries after a dropped response) without ever
- * double-refunding Stamps, double-counting pigeon stats, or sending a
- * duplicate notification. Only the caller whose UPDATE actually flips the
- * delivery out of an active status runs the side effects; every other
- * caller just gets back the delivery's real, current status from the DB —
- * the frontend never decides completion on its own.
+ * Prefer the server-side resolve_delivery RPC (migration 015) so failure
+ * probability, refunds, and pigeon stats are authoritative and race-safe.
+ * Falls back to a limited client path only if the RPC is unavailable.
  */
 export async function completeDelivery(
   deliveryId: string,
   messageId: string,
   receiverId: string
 ): Promise<CompleteDeliveryResult> {
-  const failChance = 0.005;
+  const { data, error } = await supabase.rpc('resolve_delivery', {
+    p_delivery_id: deliveryId,
+  });
+
+  if (!error && data) {
+    const status = (data as { status?: string }).status;
+    if (status === 'FAILED' || status === 'DELIVERED' || status === 'READ') {
+      return { status };
+    }
+  }
+
+  if (error) {
+    console.warn('resolve_delivery RPC unavailable, using fallback:', error.message);
+  }
+
+  // ---- Fallback (pre-015): still avoid double side-effects via conditional UPDATE ----
+  // Failure probability from settings when possible
+  let failChance = 0.005;
+  try {
+    const { data: row } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'failure_probability')
+      .maybeSingle();
+    if (row?.value != null) {
+      const n = Number(String(row.value).replace(/"/g, ''));
+      if (Number.isFinite(n) && n >= 0 && n <= 1) failChance = n;
+    }
+  } catch {
+    /* keep default */
+  }
   const failed = Math.random() < failChance;
 
   if (failed) {
@@ -403,7 +452,6 @@ export async function completeDelivery(
       .maybeSingle();
 
     if (!failRow) {
-      // Someone else already resolved this delivery — report the real status.
       return await fetchResolvedStatus(deliveryId, 'FAILED');
     }
 
@@ -441,7 +489,6 @@ export async function completeDelivery(
     .maybeSingle();
 
   if (!delRow) {
-    // Someone else already resolved this delivery — report the real status.
     return await fetchResolvedStatus(deliveryId, 'DELIVERED');
   }
 

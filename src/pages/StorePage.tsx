@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -14,6 +14,7 @@ interface CatalogItem {
   price_stamps: number;
   stock: number | null;
   is_featured: boolean;
+  randomize_stats?: boolean;
 }
 
 export default function StorePage() {
@@ -22,20 +23,23 @@ export default function StorePage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [buyingId, setBuyingId] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('store_items')
-        .select(
-          'id, sku, name, description, item_type, bird_rarity, bird_sprite_id, price_stamps, stock, is_featured'
-        )
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-      setCatalog((data as CatalogItem[]) || []);
-    })();
+  const loadCatalog = useCallback(async () => {
+    const { data } = await supabase
+      .from('store_items')
+      .select(
+        'id, sku, name, description, item_type, bird_rarity, bird_sprite_id, price_stamps, stock, is_featured, randomize_stats'
+      )
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    setCatalog((data as CatalogItem[]) || []);
   }, []);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   const redeem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +61,62 @@ export default function StorePage() {
     setMsg(`Success! New balance: ${data} Stamps`);
     setCode('');
     await refreshProfile();
+  };
+
+  const buy = async (item: CatalogItem) => {
+    setMsg('');
+    setErr('');
+    if (!profile) {
+      setErr('Sign in to buy.');
+      return;
+    }
+    const soldOut = item.stock !== null && item.stock <= 0;
+    if (soldOut) {
+      setErr('Sold out.');
+      return;
+    }
+    if ((profile.stamp_balance ?? 0) < item.price_stamps) {
+      setErr('Not enough stamps.');
+      return;
+    }
+    const label =
+      item.item_type === 'bird'
+        ? `Buy "${item.name}" for ${item.price_stamps} stamps? This becomes your active pigeon.`
+        : `Buy "${item.name}" for ${item.price_stamps} stamps?`;
+    if (!confirm(label)) return;
+
+    setBuyingId(item.id);
+    const { data, error } = await supabase.rpc('purchase_store_item', {
+      p_item_id: item.id,
+    });
+    setBuyingId(null);
+
+    if (error) {
+      setErr(error.message.replace(/^.*exception: /i, '') || error.message);
+      return;
+    }
+
+    const payload = data as {
+      ok?: boolean;
+      new_balance?: number;
+      item_type?: string;
+      pigeon_id?: string;
+    };
+
+    if (item.item_type === 'bird') {
+      setMsg(
+        `Purchased ${item.name}! It is now your active pigeon.` +
+          (payload?.new_balance != null ? ` Balance: ${payload.new_balance} stamps.` : '')
+      );
+    } else {
+      setMsg(
+        `Purchased ${item.name}.` +
+          (payload?.new_balance != null ? ` Balance: ${payload.new_balance} stamps.` : '')
+      );
+    }
+
+    await refreshProfile();
+    await loadCatalog();
   };
 
   return (
@@ -95,16 +155,15 @@ export default function StorePage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 16, marginBottom: 8 }}>Catalog</h2>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
-          Items and birds listed by admin. Purchase checkout coming soon — stock is managed in
-          Admin → Store.
+          Buy with stamps. Birds become your active pigeon. Random-stat birds roll stats by rarity
+          when you buy.
         </p>
         {catalog.length === 0 && (
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            No items listed yet.
-          </p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No items listed yet.</p>
         )}
         {catalog.map((it) => {
           const soldOut = it.stock !== null && it.stock <= 0;
+          const canAfford = (profile?.stamp_balance ?? 0) >= it.price_stamps;
           return (
             <div
               key={it.id}
@@ -123,13 +182,21 @@ export default function StorePage() {
                     {it.name}
                   </strong>
                   {it.is_featured && (
-                    <span style={{ fontSize: 11, marginLeft: 6, color: 'var(--primary, #3b82f6)' }}>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        marginLeft: 6,
+                        color: 'var(--primary, #3b82f6)',
+                      }}
+                    >
                       Featured
                     </span>
                   )}
                   <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
                     {it.description || it.sku}
                     {it.bird_rarity ? ` · ${it.bird_rarity}` : ''}
+                    {it.randomize_stats ? ' · random stats' : ''}
+                    {it.bird_sprite_id ? ` · ${it.bird_sprite_id}` : ''}
                   </p>
                 </div>
                 <div style={{ textAlign: 'right', fontSize: 13 }}>
@@ -145,12 +212,18 @@ export default function StorePage() {
               </div>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-primary"
                 style={{ width: '100%', marginTop: 10 }}
-                disabled
-                title="Checkout coming soon"
+                disabled={soldOut || buyingId === it.id || !profile}
+                onClick={() => void buy(it)}
               >
-                Buy (soon)
+                {buyingId === it.id
+                  ? 'Buying…'
+                  : soldOut
+                    ? 'Sold out'
+                    : !canAfford
+                      ? `Need ${it.price_stamps} stamps`
+                      : `Buy · ${it.price_stamps} 🪙`}
               </button>
             </div>
           );

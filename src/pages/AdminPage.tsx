@@ -7,6 +7,7 @@ import { BASIC_SPRITE_IDS } from '../lib/pigeonAppearance';
 import PigeonAvatar from '../components/PigeonAvatar';
 import AdminPigeonsPanel from './admin/AdminPigeonsPanel';
 import AdminStorePanel from './admin/AdminStorePanel';
+import AdminHollowFlightPanel from './admin/AdminHollowFlightPanel';
 
 type Tab =
   | 'dashboard'
@@ -24,6 +25,7 @@ type Tab =
   | 'audit'
   | 'pigeons'
   | 'store'
+  | 'hollow'
   | 'settings';
 
 interface AppEvent {
@@ -115,6 +117,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'audit', label: 'Audit log' },
   { id: 'pigeons', label: 'Pigeons' },
   { id: 'store', label: 'Store' },
+  { id: 'hollow', label: 'Hollow Flight' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -1855,6 +1858,10 @@ export default function AdminPage() {
 
         {tab === 'store' && (
           <AdminStorePanel flash={flash} />
+        )}
+
+        {tab === 'hollow' && (
+          <AdminHollowFlightPanel flash={flash} />
         )}
 
         {tab === 'settings' && (

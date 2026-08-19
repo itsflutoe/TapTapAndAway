@@ -6,10 +6,17 @@ import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
 import PigeonAvatar from '../components/PigeonAvatar';
 import { resolveOverdueDeliveriesForUser } from '../services/messaging';
+import { GAME_CATALOG } from '../games/registry';
+import { getHollowFlightMyStats } from '../services/hollowFlight';
+import { loadHollowFlightConfig } from '../services/hollowFlight';
 
 export default function HomePage() {
   const { user, profile, pigeon, claimDailyReward } = useAuth();
   const [rewardMsg, setRewardMsg] = useState('');
+  const [bestByGame, setBestByGame] = useState<Record<string, number>>({});
+  const [hfEnabled, setHfEnabled] = useState(true);
+  const [hfTitle, setHfTitle] = useState('Hollow Flight');
+  const [hfTagline, setHfTagline] = useState('Fly. Dodge. Collect.');
 
   useEffect(() => {
     claimDailyReward().then((amt) => {
@@ -25,6 +32,25 @@ export default function HomePage() {
     void resolveOverdueDeliveriesForUser(user.id).catch(() => undefined);
   }, [user?.id]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const stats = await getHollowFlightMyStats();
+        setBestByGame((m) => ({ ...m, 'hollow-flight': stats.best_score || 0 }));
+      } catch {
+        /* ignore */
+      }
+      try {
+        const cfg = await loadHollowFlightConfig();
+        setHfEnabled(cfg.enabled);
+        setHfTitle(cfg.title || 'Hollow Flight');
+        setHfTagline(cfg.description || 'Fly. Dodge. Collect.');
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
   if (!profile) return null;
 
   if (profile.is_banned) {
@@ -34,22 +60,26 @@ export default function HomePage() {
           <div style={{ fontSize: 40, marginBottom: 12 }}>🚫</div>
           <h1 style={{ fontSize: 20, marginBottom: 8 }}>Account banned</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.5 }}>
-            Your account has been restricted by an administrator. You cannot send messages or use most features.
+            Your account has been restricted by an administrator. You cannot send messages or use
+            most features.
           </p>
         </div>
       </div>
     );
   }
 
-  const km = Number(pigeon?.total_distance_km ?? 0);
-  const flights = Number(pigeon?.total_flights ?? 0);
-  const success = Number(pigeon?.successful_flights ?? 0);
-
   return (
     <div className="page" style={{ display: 'flex', flexDirection: 'column' }}>
       <Tutorial />
 
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 8,
+        }}
+      >
         <Link to="/profile" style={{ fontWeight: 700, fontSize: 20, color: 'var(--text)' }}>
           {profile.display_name}
         </Link>
@@ -82,74 +112,78 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Compact active pigeon strip — not the game */}
       <div
+        className="card"
         style={{
-          flex: 1,
           display: 'flex',
-          flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: 280,
+          gap: 12,
+          padding: '10px 12px',
+          marginBottom: 16,
         }}
       >
-        <PigeonAvatar
-          spriteId={pigeon?.sprite_id}
-          size={140}
-          name={pigeon?.name}
-          className="pigeon-idle"
-          style={{ marginBottom: 8 }}
-        />
-        <div
-          style={{
-            width: 140,
-            height: 12,
-            background: 'linear-gradient(90deg, transparent, #8b5a2b44, transparent)',
-            borderRadius: 8,
-            marginBottom: 16,
-          }}
-        />
-        <p style={{ fontWeight: 600, fontSize: 18 }}>
-          {pigeon?.name || 'Your pigeon'} is ready.
-        </p>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 4 }}>
-          PID: {profile.pigeon_id}
-        </p>
-
-        <div
-          className="card"
-          style={{
-            marginTop: 20,
-            width: '100%',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            gap: 8,
-            textAlign: 'center',
-            padding: '14px 10px',
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{km.toFixed(1)}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>km flown</div>
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{flights}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>flights</div>
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{success}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>delivered</div>
+        <PigeonAvatar spriteId={pigeon?.sprite_id} size={48} name={pigeon?.name} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{pigeon?.name || 'Your pigeon'}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Ready for games · PID {profile.pigeon_id}
           </div>
         </div>
       </div>
 
-      <div className="card" style={{ textAlign: 'center' }}>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 12 }}>
-          Messages travel by pigeon. Longer journeys cost more Stamps.
-        </p>
-        <Link to="/send" className="btn btn-primary">
-          🐦 Send a pigeon
-        </Link>
-      </div>
+      <h1 style={{ fontSize: 18, marginBottom: 12 }}>Games</h1>
+
+      {GAME_CATALOG.map((game) => {
+        const enabled = game.id === 'hollow-flight' ? hfEnabled : true;
+        const title = game.id === 'hollow-flight' ? hfTitle : game.title;
+        const tagline = game.id === 'hollow-flight' ? hfTagline : game.tagline;
+        const best = bestByGame[game.id];
+
+        return (
+          <div key={game.id} className="card" style={{ marginBottom: 12, padding: 16 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ fontSize: 36, lineHeight: 1 }}>{game.emoji}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 17 }}>{title}</div>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 8px' }}>
+                  {tagline}
+                </p>
+                {typeof best === 'number' && (
+                  <p style={{ fontSize: 13, marginBottom: 10 }}>
+                    Best Score: <strong>{best}</strong>
+                  </p>
+                )}
+                {enabled ? (
+                  <Link
+                    to={game.path}
+                    className="btn btn-primary"
+                    style={{ display: 'inline-block', minWidth: 120, textAlign: 'center' }}
+                  >
+                    Play
+                  </Link>
+                ) : (
+                  <button type="button" className="btn btn-secondary" disabled>
+                    Unavailable
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <p
+        style={{
+          textAlign: 'center',
+          fontSize: 12,
+          color: 'var(--text-secondary)',
+          marginTop: 8,
+          marginBottom: 24,
+        }}
+      >
+        More games coming soon.
+      </p>
     </div>
   );
 }

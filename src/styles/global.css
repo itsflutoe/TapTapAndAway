@@ -55,6 +55,19 @@ a {
   position: relative;
 }
 
+/* Focused mini-game layout — no bottom nav */
+.app-shell--game {
+  max-width: 560px;
+  min-height: 100dvh;
+}
+.app-shell--game .page {
+  padding-bottom: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
 .page {
   flex: 1;
   overflow-y: auto;

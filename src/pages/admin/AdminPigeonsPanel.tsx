@@ -319,7 +319,7 @@ export default function AdminPigeonsPanel({ flash }: Props) {
           {pigeons.map((p) => (
             <div key={p.id} style={{ ...card, cursor: 'pointer' }} onClick={() => void openPigeon(p)}>
               <strong>{p.name}</strong>{' '}
-              <span style={{ color: '#64748b', fontSize: 12 }}>{p.rarity} · Lv {p.level ?? 1} · {p.sprite_id}</span>
+              <span style={{ color: '#64748b', fontSize: 12 }}>{p.rarity} · Lv {p.level ?? 1} · {p.sprite_id ?? ''}</span>
             </div>
           ))}
           {selected && (
@@ -332,12 +332,38 @@ export default function AdminPigeonsPanel({ flash }: Props) {
                 </div>
               ))}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {(['level', 'exp', 'speed', 'stamina', 'reliability', 'accuracy', 'endurance', 'luck'] as const).map((f) => (
-                  <div key={f}>
-                    <label style={{ fontSize: 12, color: '#a0a8b8' }}>{f}</label>
-                    <input style={inputStyle} type="number" value={Number(selected[f] ?? 0)} onChange={(e) => setSelected({ ...selected, [f]: Number(e.target.value) })} />
-                  </div>
-                ))}
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>level</label>
+                  <input style={inputStyle} type="number" value={Number(selected.level ?? 1)} onChange={(e) => setSelected({ ...selected, level: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>exp</label>
+                  <input style={inputStyle} type="number" value={Number(selected.exp ?? 0)} onChange={(e) => setSelected({ ...selected, exp: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>speed</label>
+                  <input style={inputStyle} type="number" value={Number(selected.speed ?? 0)} onChange={(e) => setSelected({ ...selected, speed: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>stamina</label>
+                  <input style={inputStyle} type="number" value={Number(selected.stamina ?? 0)} onChange={(e) => setSelected({ ...selected, stamina: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>reliability</label>
+                  <input style={inputStyle} type="number" value={Number(selected.reliability ?? 0)} onChange={(e) => setSelected({ ...selected, reliability: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>accuracy</label>
+                  <input style={inputStyle} type="number" value={Number(selected.accuracy ?? 0)} onChange={(e) => setSelected({ ...selected, accuracy: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>endurance</label>
+                  <input style={inputStyle} type="number" value={Number(selected.endurance ?? 0)} onChange={(e) => setSelected({ ...selected, endurance: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>luck</label>
+                  <input style={inputStyle} type="number" value={Number(selected.luck ?? 0)} onChange={(e) => setSelected({ ...selected, luck: Number(e.target.value) })} />
+                </div>
               </div>
               <h3 style={{ fontSize: 13, marginTop: 14 }}>Abilities</h3>
               {abilities.filter((a) => a.is_active).map((a) => {

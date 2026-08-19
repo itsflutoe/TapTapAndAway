@@ -4,6 +4,7 @@ import './styles/global.css';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import HomePage from './pages/HomePage';
+import HollowFlightPage from './pages/HollowFlightPage';
 import InboxPage from './pages/InboxPage';
 import ConversationPage from './pages/ConversationPage';
 import SendPage from './pages/SendPage';
@@ -155,6 +156,16 @@ function AppRoutes() {
           <ProtectedRoute>
             <div className="app-shell">
               <DeliveryPage />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/games/hollow-flight"
+        element={
+          <ProtectedRoute>
+            <div className="app-shell app-shell--game">
+              <HollowFlightPage />
             </div>
           </ProtectedRoute>
         }

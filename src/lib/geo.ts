@@ -4,6 +4,17 @@ import { supabase } from './supabase';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
+/** Default weather speed multipliers (overridden by system_settings.weather_modifiers). */
+export const DEFAULT_WEATHER_MODIFIERS: Record<string, number> = {
+  clear: 1.0,
+  cloudy: 0.95,
+  fog: 0.95,
+  rain: 0.8,
+  heavy_rain: 0.65,
+  storm: 0.5,
+  snow: 0.65,
+};
+
 /** Haversine great-circle distance in kilometers */
 export function haversineKm(
   lat1: number,
@@ -32,21 +43,78 @@ export function mphToKmh(mph: number): number {
   return mph * 1.60934;
 }
 
-export function calculateStampCost(distanceKm: number, kmPerStamp = 10): number {
+/**
+ * Stamp cost from distance.
+ * cost = max(minCost, ceil(distanceKm / kmPerStamp))
+ * When free event is active the caller may force 0.
+ */
+export function calculateStampCost(
+  distanceKm: number,
+  kmPerStamp = 10,
+  minCost = 1
+): number {
   const per = Number(kmPerStamp);
   const k = Number.isFinite(per) && per > 0 ? per : 10;
-  return Math.max(1, Math.ceil(distanceKm / k));
+  const min = Number.isFinite(Number(minCost)) && Number(minCost) >= 0 ? Number(minCost) : 1;
+  if (distanceKm <= 0) return Math.max(min, 0);
+  return Math.max(min, Math.ceil(distanceKm / k));
+}
+
+async function readSettingRaw(key: string): Promise<string | null> {
+  try {
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', key)
+      .maybeSingle();
+    if (data?.value == null) return null;
+    return typeof data.value === 'string' ? data.value : JSON.stringify(data.value);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchKmPerStamp(
-  getSetting: (key: string) => Promise<string | null>
+  getSetting?: (key: string) => Promise<string | null>
 ): Promise<number> {
   try {
-    const raw = await getSetting('km_per_stamp');
+    const raw = getSetting ? await getSetting('km_per_stamp') : await readSettingRaw('km_per_stamp');
     const n = raw != null ? Number(String(raw).replace(/"/g, '')) : 10;
     return Number.isFinite(n) && n > 0 ? n : 10;
   } catch {
     return 10;
+  }
+}
+
+export async function fetchMinStampCost(): Promise<number> {
+  try {
+    const raw = await readSettingRaw('min_stamp_cost');
+    const n = raw != null ? Number(String(raw).replace(/"/g, '')) : 1;
+    return Number.isFinite(n) && n >= 0 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export async function fetchWeatherModifiers(): Promise<Record<string, number>> {
+  try {
+    const raw = await readSettingRaw('weather_modifiers');
+    if (!raw) return { ...DEFAULT_WEATHER_MODIFIERS };
+    let text = String(raw).trim();
+    if (text.startsWith('"') && text.endsWith('"')) {
+      text = JSON.parse(text);
+    }
+    const parsed = typeof text === 'string' ? JSON.parse(text) : text;
+    const out: Record<string, number> = { ...DEFAULT_WEATHER_MODIFIERS };
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && n <= 2) {
+        out[k] = n;
+      }
+    }
+    return out;
+  } catch {
+    return { ...DEFAULT_WEATHER_MODIFIERS };
   }
 }
 
@@ -87,6 +155,7 @@ export async function getWeatherForRoute(
 ): Promise<WeatherInfo> {
   const midLat = (originLat + destLat) / 2;
   const midLon = (originLon + destLon) / 2;
+  const modifiers = await fetchWeatherModifiers();
 
   try {
     const params = new URLSearchParams({
@@ -96,23 +165,36 @@ export async function getWeatherForRoute(
       timezone: 'auto',
     });
     const res = await fetch(`${OPEN_METEO_URL}?${params}`);
-    if (!res.ok) throw new Error('Weather API error');
+    if (!res.ok) {
+      return applyModifiers(mapWeatherCode(0), modifiers);
+    }
     const data = await res.json();
     const code = data?.current?.weather_code ?? 0;
-    return mapWeatherCode(code);
-  } catch (err) {
-    console.warn('Weather fetch failed, using clear:', err);
-    return { condition: 'clear', multiplier: 1.0, description: 'Clear' };
+    return applyModifiers(mapWeatherCode(code), modifiers);
+  } catch {
+    return applyModifiers(mapWeatherCode(0), modifiers);
   }
 }
 
+function applyModifiers(info: WeatherInfo, modifiers: Record<string, number>): WeatherInfo {
+  const m = modifiers[info.condition];
+  if (m != null && Number.isFinite(m) && m > 0) {
+    return { ...info, multiplier: m };
+  }
+  return info;
+}
+
+/**
+ * Map Open-Meteo weather codes → condition keys.
+ * Multipliers here are fallbacks only; admin weather_modifiers override them.
+ */
 function mapWeatherCode(code: number): WeatherInfo {
   if (code === 0) return { condition: 'clear', multiplier: 1.0, description: 'Clear' };
   if (code <= 3) return { condition: 'cloudy', multiplier: 0.95, description: 'Cloudy' };
-  if (code <= 48) return { condition: 'cloudy', multiplier: 0.95, description: 'Foggy / Cloudy' };
+  if (code <= 48) return { condition: 'fog', multiplier: 0.95, description: 'Foggy / Cloudy' };
   if (code <= 57) return { condition: 'rain', multiplier: 0.8, description: 'Light rain' };
   if (code <= 67) return { condition: 'rain', multiplier: 0.8, description: 'Rain' };
-  if (code <= 77) return { condition: 'heavy_rain', multiplier: 0.65, description: 'Heavy rain / Snow' };
+  if (code <= 77) return { condition: 'snow', multiplier: 0.65, description: 'Snow / Ice pellets' };
   if (code <= 82) return { condition: 'heavy_rain', multiplier: 0.65, description: 'Heavy showers' };
   if (code <= 99) return { condition: 'storm', multiplier: 0.5, description: 'Thunderstorm' };
   return { condition: 'cloudy', multiplier: 0.95, description: 'Cloudy' };
@@ -121,7 +203,6 @@ function mapWeatherCode(code: number): WeatherInfo {
 /**
  * Real flight duration in seconds:
  * distance_km / (speed_mph * 1.60934 km/h) * 3600
- * Example: 10.5 km at 40 mph ≈ 587 seconds (~9m 47s)
  */
 export function calculateFlightSeconds(distanceKm: number, speedMph: number): number {
   const speedKmh = mphToKmh(speedMph);
@@ -134,7 +215,6 @@ export function calculateFlightSeconds(distanceKm: number, speedMph: number): nu
  * Apply admin time_multiplier.
  * multiplier 1 = real time
  * multiplier 3600 = 1 real second ≈ 1 simulated hour (fast testing)
- * Never force a 3s floor when using real time — only enforce min 1s.
  */
 export function applyTimeMultiplier(realSeconds: number, timeMultiplier: number): number {
   const m = timeMultiplier > 0 ? timeMultiplier : 1;
@@ -154,16 +234,39 @@ export function formatDuration(seconds: number): string {
 
 export async function fetchTimeMultiplier(): Promise<number> {
   try {
-    const { data } = await supabase
-      .from('system_settings')
-      .select('value')
-      .eq('key', 'time_multiplier')
-      .maybeSingle();
-    if (!data?.value) return 1;
-    const raw = data.value;
-    const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/"/g, ''));
+    const raw = await readSettingRaw('time_multiplier');
+    if (!raw) return 1;
+    const n = parseFloat(String(raw).replace(/"/g, ''));
     return Number.isFinite(n) && n > 0 ? n : 1;
   } catch {
     return 1;
+  }
+}
+
+export async function fetchPigeonBaseSpeedMph(fallback = 40): Promise<number> {
+  try {
+    const raw = await readSettingRaw('pigeon_base_speed_mph');
+    if (!raw) return fallback;
+    const n = parseFloat(String(raw).replace(/"/g, ''));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchRateLimitConfig(): Promise<{ max: number; windowSeconds: number }> {
+  try {
+    const [maxRaw, winRaw] = await Promise.all([
+      readSettingRaw('rate_limit_max'),
+      readSettingRaw('rate_limit_window_seconds'),
+    ]);
+    const max = maxRaw != null ? Number(String(maxRaw).replace(/"/g, '')) : 5;
+    const windowSeconds = winRaw != null ? Number(String(winRaw).replace(/"/g, '')) : 60;
+    return {
+      max: Number.isFinite(max) && max > 0 ? max : 5,
+      windowSeconds: Number.isFinite(windowSeconds) && windowSeconds > 0 ? windowSeconds : 60,
+    };
+  } catch {
+    return { max: 5, windowSeconds: 60 };
   }
 }

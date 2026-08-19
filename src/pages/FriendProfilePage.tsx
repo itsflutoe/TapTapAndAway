@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader';
 import PigeonAvatar from '../components/PigeonAvatar';
 import { cityFromAddress, formatPresence, friendsSinceLabel } from '../lib/presence';
 import type { Profile, Pigeon, Friendship } from '../types';
+import PigeonDetailModal from '../components/PigeonDetailModal';
 
 export default function FriendProfilePage() {
   const { userId } = useParams();
@@ -15,6 +16,7 @@ export default function FriendProfilePage() {
   const [friendship, setFriendship] = useState<Friendship | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pigeonOpen, setPigeonOpen] = useState(false);
 
   useEffect(() => {
     if (!user || !userId) return;
@@ -102,7 +104,9 @@ export default function FriendProfilePage() {
 
       <div className="card" style={{ textAlign: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
-          <PigeonAvatar spriteId={pigeon?.sprite_id} size={120} name={pigeon?.name} />
+          <button type="button" onClick={() => setPigeonOpen(true)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }} aria-label="View pigeon">
+            <PigeonAvatar spriteId={pigeon?.sprite_id} size={120} name={pigeon?.name} />
+          </button>
         </div>
         <h2 style={{ fontSize: 20, margin: 0 }}>
           <span
@@ -165,6 +169,14 @@ export default function FriendProfilePage() {
       <Link to="/friends" className="btn btn-secondary" style={{ marginTop: 16, display: 'block' }}>
         Back to Friends
       </Link>
+
+      <PigeonDetailModal
+        open={pigeonOpen}
+        pigeonId={pigeon?.id ?? null}
+        onClose={() => setPigeonOpen(false)}
+        title={pigeon?.name || 'Pigeon'}
+      />
     </div>
   );
 }
+

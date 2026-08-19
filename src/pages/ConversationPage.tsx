@@ -15,7 +15,12 @@ import {
   getWeatherForRoute,
   formatDuration,
 } from '../lib/geo';
-import { getEventEffects, sendPigeonMessage, markMessageRead } from '../services/messaging';
+import {
+  getEventEffects,
+  sendPigeonMessage,
+  markMessageRead,
+  resolveOverdueDeliveriesForUser,
+} from '../services/messaging';
 
 interface ChatMessage {
   message: Message;
@@ -30,12 +35,24 @@ function messageIsVisible(message: Message, delivery: Delivery | null, userId: s
   return !!delivery && RECEIVER_VISIBLE.has(delivery.status);
 }
 
+function estimatedProgressPercent(delivery: Delivery): number {
+  const stored = Number(delivery.progress_percent) || 0;
+  if (stored > 0) return Math.min(100, stored);
+  if (!delivery.actual_departure || !delivery.estimated_duration_seconds) return 0;
+  const start = new Date(delivery.actual_departure).getTime();
+  const dur = Number(delivery.estimated_duration_seconds) * 1000;
+  if (!Number.isFinite(start) || !Number.isFinite(dur) || dur <= 0) return 0;
+  const pct = ((Date.now() - start) / dur) * 100;
+  return Math.max(0, Math.min(100, pct));
+}
+
 function messageStatus(message: Message, delivery: Delivery | null, userId: string) {
   if (message.sender_id !== userId) return '';
   if (!delivery) return 'Sending…';
   if (delivery.status === 'FAILED') return 'Failed · Stamps refunded';
   if (['DISPATCHED', 'PREPARING', 'FLYING', 'ARRIVED'].includes(delivery.status)) {
-    return `Pigeon flying · ${Math.round(Number(delivery.progress_percent) || 0)}%`;
+    const pct = Math.round(estimatedProgressPercent(delivery));
+    return `Pigeon flying · ${pct}%`;
   }
   if (delivery.status === 'READ') return 'Read';
   if (delivery.status === 'DELIVERED') return 'Delivered';
@@ -64,6 +81,13 @@ export default function ConversationPage() {
   const loadPeerAndMessages = async () => {
     if (!user || !peerId) return;
     setLoading(true);
+
+    // Finish overdue flights even if peer is offline and Delivery map was never opened
+    try {
+      await resolveOverdueDeliveriesForUser(user.id);
+    } catch {
+      /* non-fatal */
+    }
 
     const [{ data: peerData }, { data: peerPigeon }] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', peerId).maybeSingle(),

@@ -1,8 +1,20 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+
+interface CatalogItem {
+  id: string;
+  sku: string;
+  name: string;
+  description: string;
+  item_type: string;
+  bird_rarity: string | null;
+  bird_sprite_id: string | null;
+  price_stamps: number;
+  stock: number | null;
+  is_featured: boolean;
+}
 
 export default function StorePage() {
   const { profile, refreshProfile } = useAuth();
@@ -10,6 +22,20 @@ export default function StorePage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('store_items')
+        .select(
+          'id, sku, name, description, item_type, bird_rarity, bird_sprite_id, price_stamps, stock, is_featured'
+        )
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      setCatalog((data as CatalogItem[]) || []);
+    })();
+  }, []);
 
   const redeem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,7 +61,7 @@ export default function StorePage() {
 
   return (
     <div className="page">
-      <PageHeader title="🛍️ Store" />
+      <PageHeader title="Store" />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 16, marginBottom: 8 }}>Redeem code</h2>
@@ -43,7 +69,7 @@ export default function StorePage() {
           Enter a code from an event or admin to receive Stamps.
         </p>
         <p style={{ fontSize: 13, marginBottom: 12 }}>
-          Balance: <strong>🪙 {profile?.stamp_balance ?? 0}</strong>
+          Balance: <strong>{profile?.stamp_balance ?? 0} Stamps</strong>
         </p>
         <form onSubmit={redeem}>
           <div className="input-group">
@@ -66,19 +92,69 @@ export default function StorePage() {
         </form>
       </div>
 
-      <div className="card" style={{ textAlign: 'center', padding: 28 }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🐦</div>
-        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Coming Soon</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.5 }}>
-          Future items may include new pigeons, upgrades, cosmetics, accessories, special
-          delivery items, and Stamp packs.
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Catalog</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+          Items and birds listed by admin. Purchase checkout coming soon — stock is managed in
+          Admin → Store.
         </p>
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        <Link to="/" className="btn btn-secondary" style={{ width: '100%' }}>
-          Back home
-        </Link>
+        {catalog.length === 0 && (
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            No items listed yet.
+          </p>
+        )}
+        {catalog.map((it) => {
+          const soldOut = it.stock !== null && it.stock <= 0;
+          return (
+            <div
+              key={it.id}
+              style={{
+                border: '1px solid var(--border, #2a2f3a)',
+                borderRadius: 12,
+                padding: 12,
+                marginBottom: 10,
+                opacity: soldOut ? 0.55 : 1,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <div>
+                  <strong>
+                    {it.item_type === 'bird' ? '🐦 ' : '📦 '}
+                    {it.name}
+                  </strong>
+                  {it.is_featured && (
+                    <span style={{ fontSize: 11, marginLeft: 6, color: 'var(--primary, #3b82f6)' }}>
+                      Featured
+                    </span>
+                  )}
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+                    {it.description || it.sku}
+                    {it.bird_rarity ? ` · ${it.bird_rarity}` : ''}
+                  </p>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 13 }}>
+                  <div style={{ fontWeight: 700 }}>{it.price_stamps} 🪙</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    {soldOut
+                      ? 'Sold out'
+                      : it.stock === null
+                        ? 'In stock'
+                        : `${it.stock} left`}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: 10 }}
+                disabled
+                title="Checkout coming soon"
+              >
+                Buy (soon)
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

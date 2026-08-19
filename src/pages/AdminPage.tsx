@@ -5,6 +5,8 @@ import { geocodeAddress } from '../lib/geo';
 import type { Profile, Delivery, StampTransaction } from '../types';
 import { BASIC_SPRITE_IDS } from '../lib/pigeonAppearance';
 import PigeonAvatar from '../components/PigeonAvatar';
+import AdminPigeonsPanel from './admin/AdminPigeonsPanel';
+import AdminStorePanel from './admin/AdminStorePanel';
 
 type Tab =
   | 'dashboard'
@@ -20,6 +22,8 @@ type Tab =
   | 'health'
   | 'broadcast'
   | 'audit'
+  | 'pigeons'
+  | 'store'
   | 'settings';
 
 interface AppEvent {
@@ -109,6 +113,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health' },
   { id: 'broadcast', label: 'Broadcast' },
   { id: 'audit', label: 'Audit log' },
+  { id: 'pigeons', label: 'Pigeons' },
+  { id: 'store', label: 'Store' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -1841,6 +1847,14 @@ export default function AdminPage() {
               </div>
             ))}
           </>
+        )}
+
+        {tab === 'pigeons' && (
+          <AdminPigeonsPanel flash={flash} />
+        )}
+
+        {tab === 'store' && (
+          <AdminStorePanel flash={flash} />
         )}
 
         {tab === 'settings' && (

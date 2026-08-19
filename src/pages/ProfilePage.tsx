@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
 import PigeonAvatar from '../components/PigeonAvatar';
 import type { Delivery } from '../types';
+import PigeonDetailModal from '../components/PigeonDetailModal';
 import {
   disableBrowserNotifications,
   enableBrowserNotifications,
@@ -35,6 +36,7 @@ type SectionId = 'account' | 'notifications' | 'app' | 'history' | 'admin' | 'ab
 
 export default function ProfilePage() {
   const { user, profile, pigeon, signOut, refreshProfile, isAdminMode, setIsAdminMode } = useAuth();
+  const [pigeonOpen, setPigeonOpen] = useState(false);
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
@@ -143,7 +145,8 @@ export default function ProfilePage() {
 
       <div className="card" style={{ textAlign: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
-          <PigeonAvatar spriteId={pigeon?.sprite_id} size={88} name={pigeon?.name} />
+          <button type="button" onClick={() => setPigeonOpen(true)} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }} aria-label="View pigeon">
+        <PigeonAvatar spriteId={pigeon?.sprite_id} size={88} name={pigeon?.name} />
         </div>
         <h2 style={{ fontSize: 20 }}>{profile.display_name}</h2>
         <p style={{ color: 'var(--text-secondary)' }}>@{profile.username}</p>

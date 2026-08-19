@@ -1846,39 +1846,76 @@ export default function AdminPage() {
         {tab === 'settings' && (
           <>
             <h1 style={{ fontSize: 22, marginBottom: 12 }}>Settings</h1>
-            <div style={card}>
-              {[
-                'time_multiplier',
-                'failure_probability',
-                'daily_stamp_reward',
-                'pigeon_base_speed_mph',
-                'km_per_stamp',
-                'signup_stamp_bonus',
-                'sending_paused',
-                'maintenance_mode',
-                'maintenance_message',
-                'max_stamps_per_user',
-                'max_sends_per_hour',
-              ].map((key) => (
-                <div key={key} style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, color: '#a0a8b8' }}>{key}</label>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                    <input
-                      style={inputStyle}
-                      value={settings[key] ?? ''}
-                      onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
-                    />
-                    <button type="button" style={btnPrimary} onClick={() => void saveSetting(key)}>
-                      Save
-                    </button>
+            <p style={{ fontSize: 12, color: '#a0a8b8', marginBottom: 12 }}>
+              These values live in <code>system_settings</code> and drive delivery, economy, and
+              system behavior. Failure rolls and refunds are applied by the server{' '}
+              <code>resolve_delivery</code> RPC.
+            </p>
+            {(
+              [
+                {
+                  title: 'Delivery',
+                  keys: [
+                    'failure_probability',
+                    'time_multiplier',
+                    'pigeon_base_speed_mph',
+                    'min_delivery_seconds',
+                    'max_delivery_seconds',
+                    'rate_limit_max',
+                    'rate_limit_window_seconds',
+                  ],
+                },
+                {
+                  title: 'Economy',
+                  keys: [
+                    'km_per_stamp',
+                    'min_stamp_cost',
+                    'signup_stamp_bonus',
+                    'daily_stamp_reward',
+                    'max_stamps_per_user',
+                  ],
+                },
+                {
+                  title: 'Weather multipliers (JSON)',
+                  keys: ['weather_modifiers'],
+                },
+                {
+                  title: 'System',
+                  keys: [
+                    'sending_paused',
+                    'maintenance_mode',
+                    'maintenance_message',
+                    'max_sends_per_hour',
+                  ],
+                },
+              ] as { title: string; keys: string[] }[]
+            ).map((group) => (
+              <div key={group.title} style={{ ...card, marginBottom: 14 }}>
+                <h2 style={{ fontSize: 14, margin: '0 0 10px', color: '#e2e8f0' }}>{group.title}</h2>
+                {group.keys.map((key) => (
+                  <div key={key} style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 12, color: '#a0a8b8' }}>{key}</label>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                      <input
+                        style={inputStyle}
+                        value={settings[key] ?? ''}
+                        onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
+                      />
+                      <button type="button" style={btnPrimary} onClick={() => void saveSetting(key)}>
+                        Save
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-              <p style={{ fontSize: 12, color: '#a0a8b8' }}>
-                time_multiplier: 1 = real time · 3600 = fast test. sending_paused: true blocks new
-                sends (enforce in next phase on client).
-              </p>
-            </div>
+                ))}
+              </div>
+            ))}
+            <p style={{ fontSize: 12, color: '#a0a8b8', marginTop: 8 }}>
+              <strong>time_multiplier</strong>: 1 = real time · 3600 = fast test.{' '}
+              <strong>failure_probability</strong>: 0–1 (e.g. 0.005 = 0.5%).{' '}
+              <strong>km_per_stamp</strong>: cost = max(min_stamp_cost, ceil(km / km_per_stamp)).{' '}
+              <strong>weather_modifiers</strong>: JSON object of condition → speed multiplier.{' '}
+              <strong>sending_paused</strong>: true blocks new sends.
+            </p>
           </>
         )}
       </main>

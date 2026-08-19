@@ -136,7 +136,7 @@ async function persistSubscriptionToServer(json: PushSubscriptionJSON): Promise<
   const auth = json.keys?.auth;
   if (!endpoint || !p256dh || !auth) return;
 
-  const { error } = await supabase.rpc('save_push_subscription', {
+  const { error } = await supabase.rpc('upsert_push_subscription', {
     p_endpoint: endpoint,
     p_p256dh: p256dh,
     p_auth: auth,

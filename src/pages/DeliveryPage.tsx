@@ -13,7 +13,6 @@ export default function DeliveryPage() {
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [receiver, setReceiver] = useState<Profile | null>(null);
-  const [senderSprite, setSenderSprite] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [letterExpanded, setLetterExpanded] = useState(false);
   const completedRef = useRef(false);
@@ -36,14 +35,6 @@ export default function DeliveryPage() {
           .eq('id', m.receiver_id)
           .single();
         setReceiver(r as Profile);
-        const { data: pig } = await supabase
-          .from('pigeons')
-          .select('sprite_id')
-          .eq('owner_id', m.sender_id)
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-        setSenderSprite((pig as { sprite_id?: string } | null)?.sprite_id ?? null);
       }
     })();
   }, [deliveryId]);
@@ -118,14 +109,6 @@ export default function DeliveryPage() {
       const elapsed = Date.now() - start;
       const pct = Math.min(100, (elapsed / durationMs) * 100);
       setProgress(pct);
-
-      const t = pct / 100;
-      const lat =
-        delivery.origin_latitude +
-        (delivery.destination_latitude - delivery.origin_latitude) * t;
-      const lng =
-        delivery.origin_longitude +
-        (delivery.destination_longitude - delivery.origin_longitude) * t;
 
       // Throttle DB progress writes (~every 10%) so Conversation/Admin stay in sync
       const bucket = Math.floor(pct / 10) * 10;

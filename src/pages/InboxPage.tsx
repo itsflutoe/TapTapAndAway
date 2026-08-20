@@ -60,7 +60,7 @@ function previewLine(
 
 function statusTag(delivery: Delivery | null, unread: boolean): string {
   if (!delivery) return '';
-  if (['FLYING', 'DISPATCHED', 'PREPARING'].includes(delivery.status)) return 'Flying';
+  if (['FLYING', 'DISPATCHED', 'PREPARING'].includes(delivery.status)) return 'En route';
   if (delivery.status === 'ARRIVED') return 'Arrived';
   if (delivery.status === 'FAILED') return 'Failed';
   if (unread) return 'New';
@@ -308,7 +308,7 @@ export default function InboxPage() {
                           padding: '2px 6px',
                           borderRadius: 6,
                           background:
-                            tag === 'Flying'
+                            tag === 'En route'
                               ? '#fff4e5'
                               : tag === 'New'
                                 ? 'var(--accent)'

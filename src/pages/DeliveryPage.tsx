@@ -1,57 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { completeDelivery, markMessageRead, updateDeliveryProgress } from '../services/messaging';
 import { formatDuration } from '../lib/geo';
-import { getSpriteMeta } from '../lib/pigeonAppearance';
+import JourneyMap from '../components/JourneyMap';
 import type { Delivery, Message, Profile } from '../types';
-
-const DefaultIcon = L.icon({
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-L.Marker.prototype.options.icon = DefaultIcon;
-
-/** Map marker: static PNG, or first frame of a sheet (clipped). No color-keying. */
-function makePigeonIcon(spriteId?: string | null) {
-  const meta = getSpriteMeta(spriteId);
-  if (meta?.url) {
-    // overflow:hidden + height 32 keeps sheet sprites on frame 0 roughly for square frames
-    const html =
-      meta.kind === 'sheet'
-        ? `<div style="width:32px;height:32px;overflow:hidden;display:flex;align-items:center;justify-content:center"><img src="${meta.url}" height="32" style="height:32px;width:auto;max-width:none;image-rendering:pixelated" alt="" /></div>`
-        : `<img src="${meta.url}" width="32" height="32" style="image-rendering:pixelated;object-fit:contain" alt="" />`;
-    return L.divIcon({
-      className: '',
-      html,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
-    });
-  }
-  return L.divIcon({
-    className: '',
-    html: '<div style="font-size:28px;line-height:1">🐦</div>',
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-  });
-}
-
-function FitBounds({ positions }: { positions: [number, number][] }) {
-  const map = useMap();
-  useEffect(() => {
-    if (positions.length >= 2) {
-      map.fitBounds(positions, { padding: [48, 48] });
-    }
-  }, [map, positions]);
-  return null;
-}
 
 export default function DeliveryPage() {
   const { deliveryId } = useParams();
@@ -61,7 +15,6 @@ export default function DeliveryPage() {
   const [receiver, setReceiver] = useState<Profile | null>(null);
   const [senderSprite, setSenderSprite] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
-  const [pigeonPos, setPigeonPos] = useState<[number, number] | null>(null);
   const [letterExpanded, setLetterExpanded] = useState(false);
   const completedRef = useRef(false);
   const lastCompletionAttemptRef = useRef(0);
@@ -153,7 +106,6 @@ export default function DeliveryPage() {
     if (!delivery || !delivery.actual_departure) return;
     if (['DELIVERED', 'READ', 'FAILED', 'ARRIVED'].includes(delivery.status)) {
       setProgress(100);
-      setPigeonPos([delivery.destination_latitude, delivery.destination_longitude]);
       return;
     }
 
@@ -174,7 +126,6 @@ export default function DeliveryPage() {
       const lng =
         delivery.origin_longitude +
         (delivery.destination_longitude - delivery.origin_longitude) * t;
-      setPigeonPos([lat, lng]);
 
       // Throttle DB progress writes (~every 10%) so Conversation/Admin stay in sync
       const bucket = Math.floor(pct / 10) * 10;
@@ -230,7 +181,11 @@ export default function DeliveryPage() {
   const stepArrival = progress >= 100 || isDone;
   const stepDelivered = isDone && !isFailed;
 
-  let statusText = `Flying… ${Math.round(progress)}%`;
+  const remainingSec = Math.max(
+    0,
+    Math.round((1 - Math.min(100, progress) / 100) * (delivery.estimated_duration_seconds || 0))
+  );
+  let statusText = `En route · ~${formatDuration(remainingSec)}`;
   if (isFailed) statusText = 'Pigeon returned home · Stamps refunded';
   else if (isDone) statusText = 'Message delivered!';
 
@@ -248,28 +203,7 @@ export default function DeliveryPage() {
       }}
     >
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <MapContainer
-          center={origin}
-          zoom={4}
-          style={{ height: '100%', width: '100%' }}
-          scrollWheelZoom
-          zoomControl={false}
-        >
-          <TileLayer
-            attribution="&copy; OpenStreetMap"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <Marker position={origin} />
-          <Marker position={dest} />
-          <Polyline positions={[origin, dest]} color="#0071e3" weight={3} dashArray="6 8" />
-          {pigeonPos && (
-            <Marker
-              position={pigeonPos}
-              icon={makePigeonIcon(senderSprite)}
-            />
-          )}
-          <FitBounds positions={[origin, dest]} />
-        </MapContainer>
+        <JourneyMap origin={origin} dest={dest} progress={progress} />
 
         <div
           style={{

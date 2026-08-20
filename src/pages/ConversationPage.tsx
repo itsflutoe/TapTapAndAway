@@ -51,8 +51,12 @@ function messageStatus(message: Message, delivery: Delivery | null, userId: stri
   if (!delivery) return 'Sending…';
   if (delivery.status === 'FAILED') return 'Failed · Stamps refunded';
   if (['DISPATCHED', 'PREPARING', 'FLYING', 'ARRIVED'].includes(delivery.status)) {
-    const pct = Math.round(estimatedProgressPercent(delivery));
-    return `Pigeon flying · ${pct}%`;
+    const pct = estimatedProgressPercent(delivery);
+    const remaining = Math.max(
+      0,
+      Math.round((1 - pct / 100) * (Number(delivery.estimated_duration_seconds) || 0))
+    );
+    return `En route · ~${formatDuration(remaining)}`;
   }
   if (delivery.status === 'READ') return 'Read';
   if (delivery.status === 'DELIVERED') return 'Delivered';

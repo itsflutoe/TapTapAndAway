@@ -24,11 +24,20 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="app-shell" style={{ justifyContent: 'center', padding: 24 }}>
-      <div style={{ textAlign: 'center', marginBottom: 32 }}>
-        <div style={{ fontSize: 56, marginBottom: 8 }}>🐦</div>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>Tap Tap and Away</h1>
-        <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>Every message takes a journey.</p>
+    <div
+      className="app-shell"
+      style={{
+        justifyContent: 'center',
+        padding: 24,
+        background: 'radial-gradient(circle at 50% 0%, #bfdbfe 0%, transparent 55%), var(--bg)',
+      }}
+    >
+      <div style={{ textAlign: 'center', marginBottom: 28 }}>
+        <div className="brand-mark">🐦</div>
+        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em' }}>Tap Tap and Away</h1>
+        <p className="muted" style={{ marginTop: 6 }}>
+          Every message takes a journey.
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="card">
@@ -61,7 +70,7 @@ export default function LoginPage() {
         </button>
       </form>
 
-      <p style={{ textAlign: 'center', marginTop: 20, color: 'var(--text-secondary)' }}>
+      <p className="muted" style={{ textAlign: 'center', marginTop: 20 }}>
         New here? <Link to="/signup">Create an account</Link>
       </p>
     </div>

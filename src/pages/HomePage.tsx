@@ -5,10 +5,16 @@ import { useAuth } from '../contexts/AuthContext';
 import Tutorial from '../components/Tutorial';
 import NotificationBell from '../components/NotificationBell';
 import PigeonAvatar from '../components/PigeonAvatar';
+import PigeonDetailModal from '../components/PigeonDetailModal';
 import { resolveOverdueDeliveriesForUser } from '../services/messaging';
 import { GAME_CATALOG } from '../games/registry';
-import { getHollowFlightMyStats } from '../services/hollowFlight';
-import { loadHollowFlightConfig } from '../services/hollowFlight';
+import { getHollowFlightMyStats, loadHollowFlightConfig } from '../services/hollowFlight';
+
+function rarityClass(r?: string | null) {
+  const k = (r || 'basic').toLowerCase();
+  if (['common', 'basic', 'epic', 'legendary', 'mythical', 'custom'].includes(k)) return k;
+  return 'basic';
+}
 
 export default function HomePage() {
   const { user, profile, pigeon, claimDailyReward } = useAuth();
@@ -17,6 +23,7 @@ export default function HomePage() {
   const [hfEnabled, setHfEnabled] = useState(true);
   const [hfTitle, setHfTitle] = useState('Hollow Flight');
   const [hfTagline, setHfTagline] = useState('Fly. Dodge. Collect.');
+  const [pigeonOpen, setPigeonOpen] = useState(false);
 
   useEffect(() => {
     claimDailyReward().then((amt) => {
@@ -59,7 +66,7 @@ export default function HomePage() {
         <div className="card" style={{ textAlign: 'center', padding: 32, marginTop: 40 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🚫</div>
           <h1 style={{ fontSize: 20, marginBottom: 8 }}>Account banned</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.5 }}>
+          <p className="muted">
             Your account has been restricted by an administrator. You cannot send messages or use
             most features.
           </p>
@@ -68,8 +75,13 @@ export default function HomePage() {
     );
   }
 
+  const level = pigeon?.level ?? 1;
+  const exp = pigeon?.exp ?? 0;
+  // Rough bar until detail modal loads exact next-level requirement
+  const expPct = Math.min(100, Math.round((exp % 100) || (exp > 0 ? 30 : 5)));
+
   return (
-    <div className="page" style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="page">
       <Tutorial />
 
       <header
@@ -77,16 +89,17 @@ export default function HomePage() {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: 8,
+          marginBottom: 12,
         }}
       >
-        <Link to="/profile" style={{ fontWeight: 700, fontSize: 20, color: 'var(--text)' }}>
-          {profile.display_name}
-        </Link>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="stamp-badge">🪙 {profile.stamp_balance}</span>
+        <div>
+          <div className="caption">Welcome back</div>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>{profile.display_name}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="stamp-chip">🪙 {profile.stamp_balance}</span>
           <NotificationBell />
-          <Link to="/store" aria-label="Store">
+          <Link to="/store" aria-label="Store" className="icon-btn-link">
             <ShoppingBag size={22} color="var(--text-secondary)" />
           </Link>
           <Link to="/profile" aria-label="Settings">
@@ -95,44 +108,28 @@ export default function HomePage() {
         </div>
       </header>
 
-      {rewardMsg && (
-        <div
-          style={{
-            background: '#e8f8ee',
-            color: '#1a7f37',
-            textAlign: 'center',
-            padding: 8,
-            borderRadius: 10,
-            marginBottom: 12,
-            fontWeight: 600,
-            fontSize: 14,
-          }}
-        >
-          {rewardMsg}
-        </div>
-      )}
+      {rewardMsg && <div className="reward-toast">{rewardMsg}</div>}
 
-      {/* Compact active pigeon strip — not the game */}
-      <div
-        className="card"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '10px 12px',
-          marginBottom: 16,
-        }}
-      >
-        <PigeonAvatar spriteId={pigeon?.sprite_id} size={48} name={pigeon?.name} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{pigeon?.name || 'Your pigeon'}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Ready for games · PID {profile.pigeon_id}
+      <button type="button" className="pigeon-card" onClick={() => setPigeonOpen(true)}>
+        <PigeonAvatar spriteId={pigeon?.sprite_id} size={56} name={pigeon?.name} />
+        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+            <strong style={{ fontSize: 15 }}>{pigeon?.name || 'Your pigeon'}</strong>
+            <span className={`rarity-chip ${rarityClass(pigeon?.rarity)}`}>
+              {pigeon?.rarity || 'basic'}
+            </span>
+          </div>
+          <div className="caption">
+            Lv. {level} · {exp} EXP · PID {profile.pigeon_id}
+          </div>
+          <div className="exp-bar">
+            <span style={{ width: `${expPct}%` }} />
           </div>
         </div>
-      </div>
+        <span className="caption">›</span>
+      </button>
 
-      <h1 style={{ fontSize: 18, marginBottom: 12 }}>Games</h1>
+      <h2 style={{ fontSize: 17, marginBottom: 10 }}>Games</h2>
 
       {GAME_CATALOG.map((game) => {
         const enabled = game.id === 'hollow-flight' ? hfEnabled : true;
@@ -141,29 +138,29 @@ export default function HomePage() {
         const best = bestByGame[game.id];
 
         return (
-          <div key={game.id} className="card" style={{ marginBottom: 12, padding: 16 }}>
+          <div key={game.id} className="card" style={{ marginBottom: 12, padding: 14 }}>
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <div style={{ fontSize: 36, lineHeight: 1 }}>{game.emoji}</div>
+              <div className="game-card-emoji">{game.emoji}</div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 17 }}>{title}</div>
-                <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 8px' }}>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>{title}</div>
+                <p className="muted" style={{ margin: '4px 0 8px' }}>
                   {tagline}
                 </p>
                 {typeof best === 'number' && (
-                  <p style={{ fontSize: 13, marginBottom: 10 }}>
-                    Best Score: <strong>{best}</strong>
+                  <p className="caption" style={{ marginBottom: 10 }}>
+                    Best score: <strong style={{ color: 'var(--text)' }}>{best}</strong>
                   </p>
                 )}
                 {enabled ? (
                   <Link
                     to={game.path}
                     className="btn btn-primary"
-                    style={{ display: 'inline-block', minWidth: 120, textAlign: 'center' }}
+                    style={{ display: 'inline-flex', minWidth: 120, width: 'auto', padding: '10px 18px' }}
                   >
                     Play
                   </Link>
                 ) : (
-                  <button type="button" className="btn btn-secondary" disabled>
+                  <button type="button" className="btn btn-secondary" disabled style={{ width: 'auto' }}>
                     Unavailable
                   </button>
                 )}
@@ -173,17 +170,16 @@ export default function HomePage() {
         );
       })}
 
-      <p
-        style={{
-          textAlign: 'center',
-          fontSize: 12,
-          color: 'var(--text-secondary)',
-          marginTop: 8,
-          marginBottom: 24,
-        }}
-      >
+      <p className="caption" style={{ textAlign: 'center', marginTop: 8, marginBottom: 24 }}>
         More games coming soon.
       </p>
+
+      <PigeonDetailModal
+        open={pigeonOpen}
+        pigeonId={pigeon?.id ?? null}
+        onClose={() => setPigeonOpen(false)}
+        title={pigeon?.name || 'Your pigeon'}
+      />
     </div>
   );
 }

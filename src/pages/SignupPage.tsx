@@ -125,7 +125,7 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="app-shell" style={{ padding: 24, overflowY: 'auto' }}>
+    <div className="app-shell" style={{ background: 'radial-gradient(circle at 50% 0%, #bfdbfe 0%, transparent 50%), var(--bg)' }} style={{ padding: 24, overflowY: 'auto' }}>
       <div style={{ textAlign: 'center', marginBottom: 24 }}>
         <div style={{ fontSize: 40 }}>🐦</div>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>Join Tap Tap and Away</h1>

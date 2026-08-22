@@ -76,7 +76,6 @@ export default function PigeonDetailModal({
 
   if (!open) return null;
 
-  const rarityColor = detail?.rarity_meta?.color || '#94a3b8';
   const rarityLabel = detail?.rarity_meta?.name || titleCase(detail?.rarity || 'Unknown');
   const rarityIcon = detail?.rarity_meta?.icon || '🐦';
   const ratio = detail ? expProgressRatio(detail.exp, detail.exp_to_next) : 0;
@@ -98,108 +97,30 @@ export default function PigeonDetailModal({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 95,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex',
-        alignItems: 'flex-end',
-        justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 420,
-          maxHeight: 'min(88vh, 640px)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--bg-card, #1a1f29)',
-          borderTopLeftRadius: 16,
-          borderTopRightRadius: 16,
-          color: 'var(--text-primary, #f1f5f9)',
-          boxShadow: '0 -8px 32px rgba(0,0,0,0.35)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '14px 16px 8px',
-            flexShrink: 0,
-          }}
-        >
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-head">
           <h2 style={{ margin: 0, fontSize: 18 }}>{title || detail?.name || 'Pigeon'}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--text-secondary, #94a3b8)',
-              fontSize: 22,
-              cursor: 'pointer',
-              lineHeight: 1,
-              padding: 4,
-            }}
-            aria-label="Close"
-          >
+          <button type="button" onClick={onClose} className="icon-chip" aria-label="Close">
             ×
           </button>
         </div>
 
-        <div
-          style={{
-            overflowY: 'auto',
-            padding: '4px 16px',
-            paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))',
-            WebkitOverflowScrolling: 'touch',
-          }}
-        >
-          {loading && (
-            <p style={{ color: 'var(--text-secondary, #94a3b8)', marginTop: 12 }}>Loading…</p>
-          )}
-          {error && !loading && (
-            <p style={{ color: '#fca5a5', marginTop: 12 }}>{error}</p>
-          )}
+        <div className="sheet-body">
+          {loading && <p className="muted">Loading…</p>}
+          {error && !loading && <p className="error-text">{error}</p>}
 
           {detail && !loading && (
             <>
               <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                 <PigeonAvatar spriteId={detail.sprite_id} size={88} name={detail.name} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 20, fontWeight: 700 }}>{detail.name}</div>
-                  <div
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      marginTop: 6,
-                      padding: '3px 10px',
-                      borderRadius: 999,
-                      background: `${rarityColor}22`,
-                      color: rarityColor,
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  >
-                    <span aria-hidden>{rarityIcon}</span>
-                    {rarityLabel}
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>{detail.name}</div>
+                  <div className={`rarity-chip ${String(detail.rarity || 'basic').toLowerCase()}`} style={{ marginTop: 6 }}>
+                    {rarityIcon} {rarityLabel}
                   </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: 'var(--text-secondary, #94a3b8)',
-                      marginTop: 6,
-                    }}
-                  >
+                  <div className="caption" style={{ marginTop: 6 }}>
                     Level {detail.level}
                     {isActive ? ' · Active' : ''}
                   </div>
@@ -209,89 +130,43 @@ export default function PigeonDetailModal({
               {showEquip && (
                 <div style={{ marginTop: 14 }}>
                   {isActive ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ width: '100%' }}
-                      disabled
-                    >
+                    <button type="button" className="btn btn-secondary" disabled>
                       Active pigeon
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      style={{ width: '100%' }}
-                      disabled={equipping}
-                      onClick={() => void equip()}
-                    >
+                    <button type="button" className="btn btn-primary" disabled={equipping} onClick={() => void equip()}>
                       {equipping ? 'Switching…' : 'Use this pigeon'}
                     </button>
                   )}
-                  {equipMsg && (
-                    <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>{equipMsg}</p>
-                  )}
+                  {equipMsg && <p className="caption" style={{ marginTop: 8 }}>{equipMsg}</p>}
                 </div>
               )}
 
               <div style={{ marginTop: 16 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 12,
-                    color: 'var(--text-secondary, #94a3b8)',
-                    marginBottom: 4,
-                  }}
-                >
+                <div style={{ display: 'flex', justifyContent: 'space-between' }} className="caption">
                   <span>EXP</span>
                   <span>
-                    {Number(detail.exp || 0).toLocaleString()} /{' '}
-                    {Number(detail.exp_to_next || 0).toLocaleString()}
+                    {Number(detail.exp || 0).toLocaleString()} / {Number(detail.exp_to_next || 0).toLocaleString()}
                   </span>
                 </div>
-                <div
-                  style={{
-                    height: 8,
-                    borderRadius: 999,
-                    background: '#2a2f3a',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.round(ratio * 100)}%`,
-                      height: '100%',
-                      background: 'linear-gradient(90deg, #38bdf8, #818cf8)',
-                      borderRadius: 999,
-                    }}
-                  />
+                <div className="exp-bar">
+                  <span style={{ width: `${Math.round(ratio * 100)}%` }} />
                 </div>
               </div>
 
               <h3 style={{ fontSize: 14, margin: '18px 0 8px' }}>Stats</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="stat-grid">
                 {STAT_ORDER.map((row) => (
-                  <div
-                    key={row.key}
-                    style={{
-                      background: '#12161e',
-                      border: '1px solid #2a2f3a',
-                      borderRadius: 10,
-                      padding: '8px 10px',
-                    }}
-                  >
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{row.label}</div>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>
-                      {Math.round(Number(detail.stats[row.key]) || 0)}
-                    </div>
+                  <div key={row.key} className="stat-cell">
+                    <div className="lbl">{row.label}</div>
+                    <div className="val">{Math.round(Number(detail.stats[row.key]) || 0)}</div>
                   </div>
                 ))}
               </div>
 
               <h3 style={{ fontSize: 14, margin: '18px 0 8px' }}>Abilities</h3>
               {abilities.length === 0 ? (
-                <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 8px', lineHeight: 1.45 }}>
+                <p className="muted">
                   No abilities equipped.
                   {(detail.rarity === 'basic' || detail.rarity === 'common') && (
                     <> Basic and Common pigeons cannot equip abilities.</>
@@ -299,25 +174,16 @@ export default function PigeonDetailModal({
                 </p>
               ) : (
                 abilities.map((ab) => (
-                  <div
-                    key={`${ab.ability_id}-${ab.ability_level}`}
-                    style={{
-                      border: '1px solid #2a2f3a',
-                      borderRadius: 10,
-                      padding: '10px 12px',
-                      marginBottom: 8,
-                      background: '#12161e',
-                    }}
-                  >
-                    <div style={{ fontWeight: 650, fontSize: 14 }}>
+                  <div key={`${ab.ability_id}-${ab.ability_level}`} className="card" style={{ marginBottom: 8, padding: 12 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>
                       ⚡ {ab.name || ab.key || 'Ability'}{' '}
-                      <span style={{ color: '#94a3b8', fontWeight: 500, fontSize: 12 }}>
+                      <span className="caption">
                         Lv {ab.ability_level}
                         {ab.max_level ? `/${ab.max_level}` : ''}
                       </span>
                     </div>
                     {ab.description && (
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+                      <div className="muted" style={{ marginTop: 4 }}>
                         {ab.description}
                         {ab.effect_value != null ? ` (${ab.effect_value})` : ''}
                       </div>
@@ -327,7 +193,7 @@ export default function PigeonDetailModal({
               )}
 
               {(detail.total_flights != null || detail.total_distance_km != null) && (
-                <p style={{ fontSize: 12, color: '#64748b', marginTop: 12, marginBottom: 8 }}>
+                <p className="caption" style={{ marginTop: 12 }}>
                   {detail.successful_flights ?? 0}/{detail.total_flights ?? 0} successful flights
                   {detail.total_distance_km != null
                     ? ` · ${Number(detail.total_distance_km).toFixed(1)} km`

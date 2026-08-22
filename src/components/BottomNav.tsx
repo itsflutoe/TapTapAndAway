@@ -23,7 +23,6 @@ export default function BottomNav() {
     }
 
     const loadUnread = async () => {
-      // Messages addressed to me that are unread
       const { data: msgs } = await supabase
         .from('messages')
         .select('id')
@@ -36,7 +35,6 @@ export default function BottomNav() {
         return;
       }
 
-      // Only count those whose delivery is DELIVERED or READ (visible to receiver)
       const ids = msgs.map((m) => m.id);
       const { data: dels } = await supabase
         .from('deliveries')
@@ -51,16 +49,8 @@ export default function BottomNav() {
 
     const channel = supabase
       .channel(`nav-unread-${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
-        () => loadUnread()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'deliveries' },
-        () => loadUnread()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => loadUnread())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, () => loadUnread())
       .subscribe();
 
     return () => {
@@ -82,27 +72,7 @@ export default function BottomNav() {
               <span style={{ position: 'relative', display: 'inline-flex' }}>
                 <Icon strokeWidth={isActive ? 2.5 : 2} />
                 {badgeKey === 'inbox' && unread > 0 && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: -4,
-                      right: -8,
-                      background: '#ff3b30',
-                      color: '#fff',
-                      fontSize: 10,
-                      fontWeight: 700,
-                      minWidth: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '0 4px',
-                      lineHeight: 1,
-                    }}
-                  >
-                    {unread > 9 ? '9+' : unread}
-                  </span>
+                  <span className="nav-badge">{unread > 9 ? '9+' : unread}</span>
                 )}
               </span>
               <span>{label}</span>
